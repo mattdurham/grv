@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 // ConvertResult holds the parsed output of an ast_directory call.
@@ -88,24 +90,41 @@ func FormatConvertReport(dir string, r *ConvertResult, _ bool) string {
 	return sb.String()
 }
 
-// convertGoFile parses a Go file into AST, formats it via go/format, deletes
-// the original, and rewrites it. Returns whether content changed.
-func convertGoFile(sockPath, dir, filename string) FileConvertResult {
-	fullPath := filepath.Join(dir, filename)
-
-	// Read current content via daemon
+// readFileContent reads a file's content via the daemon.
+func readFileContent(sockPath, fullPath string) (string, error) {
 	readArgs, _ := json.Marshal(map[string]string{"file": fullPath})
 	resp, err := SendRequest(sockPath, "file_read", readArgs)
 	if err != nil {
-		return FileConvertResult{File: filename, Error: err.Error()}
+		return "", err
 	}
-	var readResult struct {
+	var result struct {
 		Content string `json:"content"`
 	}
-	if err := json.Unmarshal(resp, &readResult); err != nil {
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+// writeFileContent writes content to a file via the daemon.
+func writeFileContent(sockPath, fullPath, content string) error {
+	writeArgs, _ := json.Marshal(map[string]interface{}{
+		"file":    fullPath,
+		"content": content,
+		"dry_run": false,
+	})
+	_, err := SendRequest(sockPath, "file_write", writeArgs)
+	return err
+}
+
+// convertGoFile parses a .go file into AST, formats via go/format, rewrites if changed.
+func convertGoFile(sockPath, dir, filename string) FileConvertResult {
+	fullPath := filepath.Join(dir, filename)
+
+	original, err := readFileContent(sockPath, fullPath)
+	if err != nil {
 		return FileConvertResult{File: filename, Error: err.Error()}
 	}
-	original := readResult.Content
 
 	// Parse through go/ast
 	fset := token.NewFileSet()
@@ -124,46 +143,36 @@ func convertGoFile(sockPath, dir, filename string) FileConvertResult {
 	if formatted == original {
 		return FileConvertResult{File: filename, Changed: false}
 	}
-
-	// Delete original and rewrite via daemon
-	writeArgs, _ := json.Marshal(map[string]interface{}{
-		"file":    fullPath,
-		"content": formatted,
-		"dry_run": false,
-	})
-	if _, err := SendRequest(sockPath, "file_write", writeArgs); err != nil {
+	if err := writeFileContent(sockPath, fullPath, formatted); err != nil {
 		return FileConvertResult{File: filename, Error: fmt.Sprintf("write: %v", err)}
 	}
 	return FileConvertResult{File: filename, Changed: true}
 }
 
-// convertNonGoFile reads and rewrites a non-Go file via the daemon.
-// This validates daemon access and normalises any platform line-ending issues.
-func convertNonGoFile(sockPath, dir, filename string) FileConvertResult {
+// convertGoModFile parses go.mod via modfile, formats it canonically, rewrites if changed.
+func convertGoModFile(sockPath, dir, filename string) FileConvertResult {
 	fullPath := filepath.Join(dir, filename)
 
-	readArgs, _ := json.Marshal(map[string]string{"file": fullPath})
-	resp, err := SendRequest(sockPath, "file_read", readArgs)
+	original, err := readFileContent(sockPath, fullPath)
 	if err != nil {
 		return FileConvertResult{File: filename, Error: err.Error()}
 	}
-	var readResult struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(resp, &readResult); err != nil {
-		return FileConvertResult{File: filename, Error: err.Error()}
-	}
 
-	// Rewrite identical content — validates write access, no content change
-	writeArgs, _ := json.Marshal(map[string]interface{}{
-		"file":    fullPath,
-		"content": readResult.Content,
-		"dry_run": false,
-	})
-	if _, err := SendRequest(sockPath, "file_write", writeArgs); err != nil {
+	f, err := modfile.Parse(fullPath, []byte(original), nil)
+	if err != nil {
+		return FileConvertResult{File: filename, Error: fmt.Sprintf("parse go.mod: %v", err)}
+	}
+	formatted, err := f.Format()
+	if err != nil {
+		return FileConvertResult{File: filename, Error: fmt.Sprintf("format go.mod: %v", err)}
+	}
+	if string(formatted) == original {
+		return FileConvertResult{File: filename, Changed: false}
+	}
+	if err := writeFileContent(sockPath, fullPath, string(formatted)); err != nil {
 		return FileConvertResult{File: filename, Error: fmt.Sprintf("write: %v", err)}
 	}
-	return FileConvertResult{File: filename, Changed: false}
+	return FileConvertResult{File: filename, Changed: true}
 }
 
 // RunConvert processes every non-readonly file in dir:
@@ -221,19 +230,26 @@ func RunConvert(dir string) {
 		}
 	}
 
-	// Convert non-Go files
+	// Convert go.mod files; skip everything else (non-Go is binary)
 	for _, f := range result.NonGoFiles {
 		if f.Readonly {
 			skipped++
 			continue
 		}
-		r := convertNonGoFile(sockPath, abs, f.File)
-		if r.Error != "" {
-			fmt.Printf("  ERROR  %s: %s\n", f.File, r.Error)
-			errors++
-		} else {
-			fmt.Printf("  OK      %s\n", f.File)
+		base := filepath.Base(f.File)
+		if base == "go.mod" {
+			r := convertGoModFile(sockPath, abs, f.File)
+			if r.Error != "" {
+				fmt.Printf("  ERROR  %s: %s\n", f.File, r.Error)
+				errors++
+			} else if r.Changed {
+				fmt.Printf("  CHANGED %s\n", f.File)
+				changed++
+			} else {
+				fmt.Printf("  OK      %s\n", f.File)
+			}
 		}
+		// go.sum and all other non-Go files: skip silently
 	}
 
 	fmt.Printf("\nDone: %d changed, %d unchanged, %d skipped (readonly), %d errors\n",
