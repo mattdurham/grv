@@ -3,7 +3,6 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -11,10 +10,9 @@ import (
 	"go/types"
 	"path/filepath"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/lthiery/goast/meta"
-	"github.com/lthiery/goast/selector"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
+	"github.com/mattdurham/grv/meta"
+	"github.com/mattdurham/grv/selector"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -134,44 +132,43 @@ type RefResult struct {
 }
 
 // HandleASTFindRefs implements the ast_find_refs tool.
-func HandleASTFindRefs(ctx context.Context, req mcp.CallToolRequest, args ASTFindRefsArgs) (*mcp.CallToolResult, error) {
+func HandleASTFindRefs(args ASTFindRefsArgs) (json.RawMessage, error) {
 	if args.File == "" {
-		return toolError("file is required"), nil
+		return errResult("file is required")
 	}
 	if len(args.Path) == 0 || string(args.Path) == "null" || string(args.Path) == "[]" {
-		return toolError("path is required"), nil
+		return errResult("path is required")
 	}
 
 	f, fset, _, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	pkg, err := loadTypedPkg(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("load package: %v", err)), nil
+		return errResult(fmt.Sprintf("load package: %v", err))
 	}
 
 	pkgFile, err := fileInPkg(pkg, args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	targetIdent, err := identAtPath(f, fset, steps, pkg, pkgFile)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	obj := pkg.TypesInfo.ObjectOf(targetIdent)
 	if obj == nil {
 		// Fall back: return empty list for unresolved idents
-		b, _ := json.Marshal([]RefResult{})
-		return mcp.NewToolResultText(string(b)), nil
+		return okResult([]RefResult{})
 	}
 
 	// Collect all references across the scope.
@@ -211,8 +208,7 @@ func HandleASTFindRefs(ctx context.Context, req mcp.CallToolRequest, args ASTFin
 	if results == nil {
 		results = []RefResult{}
 	}
-	b, _ := json.Marshal(results)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(results)
 }
 
 // buildPkgAncestors builds the ancestor map for a slice of files (used for
@@ -249,32 +245,32 @@ type ASTFindDefResponse struct {
 }
 
 // HandleASTFindDef implements the ast_find_def tool.
-func HandleASTFindDef(ctx context.Context, req mcp.CallToolRequest, args ASTFindDefArgs) (*mcp.CallToolResult, error) {
+func HandleASTFindDef(args ASTFindDefArgs) (json.RawMessage, error) {
 	if args.File == "" {
-		return toolError("file is required"), nil
+		return errResult("file is required")
 	}
 	if len(args.Path) == 0 || string(args.Path) == "null" || string(args.Path) == "[]" {
-		return toolError("path is required"), nil
+		return errResult("path is required")
 	}
 
 	f, fset, src, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	pkg, err := loadTypedPkg(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("load package: %v", err)), nil
+		return errResult(fmt.Sprintf("load package: %v", err))
 	}
 
 	pkgFile, err := fileInPkg(pkg, args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	targetIdent, identErr := identAtPath(f, fset, steps, pkg, pkgFile)
@@ -283,7 +279,7 @@ func HandleASTFindDef(ctx context.Context, req mcp.CallToolRequest, args ASTFind
 		// we treat the declaration as its own definition.
 		node, _, navErr := selector.Navigate(f, steps)
 		if navErr != nil {
-			return toolError(navErr.Error()), nil
+			return errResult(navErr.Error())
 		}
 		pos := fset.Position(node.Pos())
 		end := fset.Position(node.End())
@@ -297,15 +293,13 @@ func HandleASTFindDef(ctx context.Context, req mcp.CallToolRequest, args ASTFind
 			Source: source,
 			Meta:   m,
 		}
-		b, _ := json.Marshal(resp)
-		return mcp.NewToolResultText(string(b)), nil
+		return okResult(resp)
 	}
 
 	obj := pkg.TypesInfo.ObjectOf(targetIdent)
 	if obj == nil {
 		resp := ASTFindDefResponse{File: args.File}
-		b, _ := json.Marshal(resp)
-		return mcp.NewToolResultText(string(b)), nil
+		return okResult(resp)
 	}
 
 	defPos := obj.Pos()
@@ -316,8 +310,7 @@ func HandleASTFindDef(ctx context.Context, req mcp.CallToolRequest, args ASTFind
 			External: true,
 			Symbol:   obj.Name(),
 		}
-		b, _ := json.Marshal(resp)
-		return mcp.NewToolResultText(string(b)), nil
+		return okResult(resp)
 	}
 
 	pkgFsetPos := pkg.Fset.Position(defPos)
@@ -365,8 +358,7 @@ func HandleASTFindDef(ctx context.Context, req mcp.CallToolRequest, args ASTFind
 		}
 	}
 
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 // ---- ast_find_impls ----
@@ -387,44 +379,44 @@ type ImplResult struct {
 }
 
 // HandleASTFindImpls implements the ast_find_impls tool.
-func HandleASTFindImpls(ctx context.Context, req mcp.CallToolRequest, args ASTFindImplsArgs) (*mcp.CallToolResult, error) {
+func HandleASTFindImpls(args ASTFindImplsArgs) (json.RawMessage, error) {
 	if args.File == "" {
-		return toolError("file is required"), nil
+		return errResult("file is required")
 	}
 	if len(args.Path) == 0 || string(args.Path) == "null" || string(args.Path) == "[]" {
-		return toolError("path is required"), nil
+		return errResult("path is required")
 	}
 
 	f, fset, _, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	// Navigate to the TypeSpec node.
 	node, _, navErr := selector.Navigate(f, steps)
 	if navErr != nil {
-		return toolError(navErr.Error()), nil
+		return errResult(navErr.Error())
 	}
 	ts, ok := node.(*ast.TypeSpec)
 	if !ok {
-		return toolError("path must point to a TypeSpec"), nil
+		return errResult("path must point to a TypeSpec")
 	}
 	_ = fset
 	_ = ts
 
 	pkg, err := loadTypedPkg(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("load package: %v", err)), nil
+		return errResult(fmt.Sprintf("load package: %v", err))
 	}
 
 	pkgFile, err := fileInPkg(pkg, args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	// Find the TypeSpec in the typed AST by name.
@@ -440,12 +432,12 @@ func HandleASTFindImpls(ctx context.Context, req mcp.CallToolRequest, args ASTFi
 		return true
 	})
 	if ifaceObj == nil {
-		return toolError(fmt.Sprintf("type %s not found in typed AST", ts.Name.Name)), nil
+		return errResult(fmt.Sprintf("type %s not found in typed AST", ts.Name.Name))
 	}
 
 	ifaceType, ok := ifaceObj.Type().Underlying().(*types.Interface)
 	if !ok {
-		return toolError(fmt.Sprintf("%s is not an interface type", ts.Name.Name)), nil
+		return errResult(fmt.Sprintf("%s is not an interface type", ts.Name.Name))
 	}
 
 	// Collect all named types in scope and check if they implement the interface.
@@ -506,6 +498,5 @@ func HandleASTFindImpls(ctx context.Context, req mcp.CallToolRequest, args ASTFi
 	if results == nil {
 		results = []ImplResult{}
 	}
-	b, _ := json.Marshal(results)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(results)
 }

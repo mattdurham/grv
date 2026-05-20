@@ -3,15 +3,13 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/lthiery/goast/selector"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
+	"github.com/mattdurham/grv/selector"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
@@ -24,17 +22,17 @@ type ASTRenameArgs struct {
 }
 
 // HandleASTRename implements the ast_rename tool.
-func HandleASTRename(ctx context.Context, req mcp.CallToolRequest, args ASTRenameArgs) (*mcp.CallToolResult, error) {
+func HandleASTRename(args ASTRenameArgs) (json.RawMessage, error) {
 	if isReadonly(args.File) {
-		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
 	if args.To == "" {
-		return toolError("to: new name cannot be empty"), nil
+		return errResult("to: new name cannot be empty")
 	}
 
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, fset *token.FileSet) error {
@@ -56,14 +54,13 @@ func HandleASTRename(ctx context.Context, req mcp.CallToolRequest, args ASTRenam
 	})
 	if err != nil {
 		if ne, ok := err.(*selector.NavigateError); ok {
-			return navError(ne), nil
+			return navErrResult(ne)
 		}
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	resp := map[string]interface{}{"changed": result.Changed, "diff": result.Diff}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 func extractDeclName(node ast.Node) (string, error) {

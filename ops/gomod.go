@@ -3,14 +3,12 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 
-	godiff "github.com/lthiery/goast/diff"
-	"github.com/lthiery/goast/editor"
-	"github.com/mark3labs/mcp-go/mcp"
+	godiff "github.com/mattdurham/grv/diff"
+	"github.com/mattdurham/grv/editor"
 	"golang.org/x/mod/modfile"
 )
 
@@ -85,10 +83,10 @@ func readGoMod(file string) (*modfile.File, []byte, error) {
 }
 
 // HandleGoModRead implements the gomod_read tool.
-func HandleGoModRead(ctx context.Context, req mcp.CallToolRequest, args GoModReadArgs) (*mcp.CallToolResult, error) {
+func HandleGoModRead(args GoModReadArgs) (json.RawMessage, error) {
 	f, _, err := readGoMod(args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	summary := goModSummary{
@@ -122,19 +120,18 @@ func HandleGoModRead(ctx context.Context, req mcp.CallToolRequest, args GoModRea
 		})
 	}
 
-	b, _ := json.Marshal(summary)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(summary)
 }
 
 // HandleGoModRequire implements the gomod_require tool.
-func HandleGoModRequire(ctx context.Context, req mcp.CallToolRequest, args GoModRequireArgs) (*mcp.CallToolResult, error) {
+func HandleGoModRequire(args GoModRequireArgs) (json.RawMessage, error) {
 	f, origData, err := readGoMod(args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	if err := f.AddRequire(args.Path, args.Version); err != nil {
-		return toolError(fmt.Sprintf("add require: %v", err)), nil
+		return errResult(fmt.Sprintf("add require: %v", err))
 	}
 	if args.Indirect {
 		f.SetRequireSeparateIndirect(f.Require)
@@ -144,52 +141,52 @@ func HandleGoModRequire(ctx context.Context, req mcp.CallToolRequest, args GoMod
 }
 
 // HandleGoModDropRequire implements the gomod_drop_require tool.
-func HandleGoModDropRequire(ctx context.Context, req mcp.CallToolRequest, args GoModDropRequireArgs) (*mcp.CallToolResult, error) {
+func HandleGoModDropRequire(args GoModDropRequireArgs) (json.RawMessage, error) {
 	f, origData, err := readGoMod(args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	if err := f.DropRequire(args.Path); err != nil {
-		return toolError(fmt.Sprintf("drop require: %v", err)), nil
+		return errResult(fmt.Sprintf("drop require: %v", err))
 	}
 
 	return writeGoMod(args.File, f, origData)
 }
 
 // HandleGoModReplace implements the gomod_replace tool.
-func HandleGoModReplace(ctx context.Context, req mcp.CallToolRequest, args GoModReplaceArgs) (*mcp.CallToolResult, error) {
+func HandleGoModReplace(args GoModReplaceArgs) (json.RawMessage, error) {
 	f, origData, err := readGoMod(args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	if err := f.AddReplace(args.Old, "", args.New, args.NewVersion); err != nil {
-		return toolError(fmt.Sprintf("add replace: %v", err)), nil
+		return errResult(fmt.Sprintf("add replace: %v", err))
 	}
 
 	return writeGoMod(args.File, f, origData)
 }
 
 // HandleGoModDropReplace implements the gomod_drop_replace tool.
-func HandleGoModDropReplace(ctx context.Context, req mcp.CallToolRequest, args GoModDropReplaceArgs) (*mcp.CallToolResult, error) {
+func HandleGoModDropReplace(args GoModDropReplaceArgs) (json.RawMessage, error) {
 	f, origData, err := readGoMod(args.File)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	if err := f.DropReplace(args.Old, ""); err != nil {
-		return toolError(fmt.Sprintf("drop replace: %v", err)), nil
+		return errResult(fmt.Sprintf("drop replace: %v", err))
 	}
 
 	return writeGoMod(args.File, f, origData)
 }
 
-func writeGoMod(file string, f *modfile.File, origData []byte) (*mcp.CallToolResult, error) {
+func writeGoMod(file string, f *modfile.File, origData []byte) (json.RawMessage, error) {
 	f.Cleanup()
 	newData, err := f.Format()
 	if err != nil {
-		return toolError(fmt.Sprintf("format go.mod: %v", err)), nil
+		return errResult(fmt.Sprintf("format go.mod: %v", err))
 	}
 
 	diffStr := ""
@@ -197,7 +194,7 @@ func writeGoMod(file string, f *modfile.File, origData []byte) (*mcp.CallToolRes
 		d, _ := godiff.Files(file, origData, newData)
 		diffStr = d
 		if err := editor.WriteAtomic(file, newData); err != nil {
-			return toolError(fmt.Sprintf("write go.mod: %v", err)), nil
+			return errResult(fmt.Sprintf("write go.mod: %v", err))
 		}
 	}
 
@@ -205,6 +202,5 @@ func writeGoMod(file string, f *modfile.File, origData []byte) (*mcp.CallToolRes
 		"changed": diffStr != "",
 		"diff":    diffStr,
 	}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }

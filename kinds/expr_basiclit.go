@@ -11,7 +11,7 @@ import (
 
 type BasicLit struct {
 	KindField string `json:"kind"`
-	Tok       string `json:"tok"`   // "INT", "FLOAT", "IMAG", "CHAR", "STRING"
+	Tok       string `json:"tok"` // "INT", "FLOAT", "IMAG", "CHAR", "STRING"
 	Value     string `json:"value"`
 }
 

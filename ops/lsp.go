@@ -3,7 +3,6 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -13,11 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/lthiery/goast/kinds"
-	"github.com/lthiery/goast/meta"
-	"github.com/lthiery/goast/selector"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
+	"github.com/mattdurham/grv/kinds"
+	"github.com/mattdurham/grv/meta"
+	"github.com/mattdurham/grv/selector"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
@@ -250,25 +248,25 @@ type ASTNodeAtResponse struct {
 }
 
 // HandleASTNodeAt implements the ast_node_at tool.
-func HandleASTNodeAt(ctx context.Context, req mcp.CallToolRequest, args ASTNodeAtArgs) (*mcp.CallToolResult, error) {
+func HandleASTNodeAt(args ASTNodeAtArgs) (json.RawMessage, error) {
 	f, fset, src, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	tokenFile := fset.File(f.Pos())
 	if args.Line < 1 || args.Line > tokenFile.LineCount() {
-		return toolError(fmt.Sprintf("line %d out of range (file has %d lines)", args.Line, tokenFile.LineCount())), nil
+		return errResult(fmt.Sprintf("line %d out of range (file has %d lines)", args.Line, tokenFile.LineCount()))
 	}
 	if args.Col < 1 {
-		return toolError(fmt.Sprintf("col %d out of range (must be >= 1)", args.Col)), nil
+		return errResult(fmt.Sprintf("col %d out of range (must be >= 1)", args.Col))
 	}
 
 	lineStart := tokenFile.LineStart(args.Line)
 	lineStartOffset := fset.Position(lineStart).Offset
 	targetOffset := lineStartOffset + (args.Col - 1)
 	if targetOffset >= len(src) {
-		return toolError(fmt.Sprintf("col %d out of range for line %d", args.Col, args.Line)), nil
+		return errResult(fmt.Sprintf("col %d out of range for line %d", args.Col, args.Line))
 	}
 
 	ancestors := collectAncestors(f)
@@ -290,14 +288,14 @@ func HandleASTNodeAt(ctx context.Context, req mcp.CallToolRequest, args ASTNodeA
 		}
 	}
 	if best == nil {
-		return toolError(fmt.Sprintf("no node found at line %d col %d", args.Line, args.Col)), nil
+		return errResult(fmt.Sprintf("no node found at line %d col %d", args.Line, args.Col))
 	}
 
 	nodePath := buildPath(best, ancestors)
 
 	nodeJSON, err := kinds.MarshalNode(best)
 	if err != nil {
-		return toolError(fmt.Sprintf("marshal node: %v", err)), nil
+		return errResult(fmt.Sprintf("marshal node: %v", err))
 	}
 
 	var sourceFrag string
@@ -309,8 +307,7 @@ func HandleASTNodeAt(ctx context.Context, req mcp.CallToolRequest, args ASTNodeA
 
 	m := meta.Compute(fset, src, best, nil, len(nodePath))
 	resp := ASTNodeAtResponse{Path: nodePath, Node: nodeJSON, Source: sourceFrag, Meta: m}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 // ASTFindSymbolsArgs is the argument struct for ast_find_symbols.
@@ -332,9 +329,9 @@ type SymbolResult struct {
 }
 
 // HandleASTFindSymbols implements the ast_find_symbols tool.
-func HandleASTFindSymbols(ctx context.Context, req mcp.CallToolRequest, args ASTFindSymbolsArgs) (*mcp.CallToolResult, error) {
+func HandleASTFindSymbols(args ASTFindSymbolsArgs) (json.RawMessage, error) {
 	if args.Dir == "" {
-		return toolError("dir is required"), nil
+		return errResult("dir is required")
 	}
 	if args.Query == "" {
 		args.Query = "*"
@@ -342,7 +339,7 @@ func HandleASTFindSymbols(ctx context.Context, req mcp.CallToolRequest, args AST
 
 	entries, err := os.ReadDir(args.Dir)
 	if err != nil {
-		return toolError(fmt.Sprintf("readdir: %v", err)), nil
+		return errResult(fmt.Sprintf("readdir: %v", err))
 	}
 
 	kindsSet := make(map[string]bool, len(args.Kinds))
@@ -366,8 +363,7 @@ func HandleASTFindSymbols(ctx context.Context, req mcp.CallToolRequest, args AST
 	if results == nil {
 		results = []SymbolResult{}
 	}
-	b, _ := json.Marshal(results)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(results)
 }
 
 func scanSymbols(f *ast.File, fset *token.FileSet, src []byte, filePath, query string, kindsFilter map[string]bool) []SymbolResult {
@@ -463,17 +459,17 @@ type FindResult struct {
 }
 
 // HandleASTFind implements the ast_find tool.
-func HandleASTFind(ctx context.Context, req mcp.CallToolRequest, args ASTFindArgs) (*mcp.CallToolResult, error) {
+func HandleASTFind(args ASTFindArgs) (json.RawMessage, error) {
 	if args.File == "" && args.Dir == "" {
-		return toolError("file or dir is required"), nil
+		return errResult("file or dir is required")
 	}
 	if len(args.Pattern) == 0 || string(args.Pattern) == "null" {
-		return toolError("pattern is required"), nil
+		return errResult("pattern is required")
 	}
 
 	var patternMap map[string]json.RawMessage
 	if err := json.Unmarshal(args.Pattern, &patternMap); err != nil {
-		return toolError(fmt.Sprintf("parse pattern: %v", err)), nil
+		return errResult(fmt.Sprintf("parse pattern: %v", err))
 	}
 
 	var files []string
@@ -482,7 +478,7 @@ func HandleASTFind(ctx context.Context, req mcp.CallToolRequest, args ASTFindArg
 	} else {
 		entries, err := os.ReadDir(args.Dir)
 		if err != nil {
-			return toolError(fmt.Sprintf("readdir: %v", err)), nil
+			return errResult(fmt.Sprintf("readdir: %v", err))
 		}
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
@@ -503,8 +499,7 @@ func HandleASTFind(ctx context.Context, req mcp.CallToolRequest, args ASTFindArg
 	if allResults == nil {
 		allResults = []FindResult{}
 	}
-	b, _ := json.Marshal(allResults)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(allResults)
 }
 
 func findInFile(f *ast.File, fset *token.FileSet, src []byte, filePath string, patternMap map[string]json.RawMessage) []FindResult {

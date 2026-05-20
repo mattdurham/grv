@@ -1757,3 +1757,538 @@ No shared helper — each handler calls `packages.Load` directly inline.
 **Next Phase:** PLAN
 
 Ready for workflow-planner agent to create detailed implementation plan for Tier 3 tools.
+
+---
+
+## 2026-05-20 - Task Received (Module Rename + CLI Daemon)
+
+grv — rename Go module from github.com/lthiery/goast → github.com/mattdurham/grv, rename binary
+from goast → grv, and add a CLI with daemon architecture:
+- grv (no args / piped stdin) → stdio MCP server (existing behavior)
+- grv start [dir] → start per-CWD daemon in background
+- grv stop [dir] → stop daemon
+- grv status → show running daemons
+Daemon serves MCP tools over Unix socket with 1-hour idle timeout.
+Constraint C (from brainstorm-prompt.md): daemon is infrastructure for future caching; existing
+MCP clients use stdio as before.
+
+Starting brainstorm process...
+
+---
+
+## 2026-05-20 - Research Findings (Module Rename + CLI Daemon)
+
+### Import Path Scope
+
+24 Go files contain the old import path `github.com/lthiery/goast`:
+
+```
+server.go
+ops/lsp_test.go       ops/rename.go         ops/rename_test.go
+editor/editor_test.go ops/replace.go        ops/gomod.go
+kinds/golden_test.go  editor/editor.go      ops/types.go
+ops/types_test.go     ops/delete.go         kinds/kinds_test.go
+ops/readonly_test.go  ops/file_test.go      meta/meta_test.go
+ops/imports.go        ops/directory_test.go selector/selector_test.go
+ops/query.go          ops/file.go           ops/lsp.go
+ops/insert.go         ops/ops_test.go
+```
+
+All are internal package imports (e.g., `github.com/lthiery/goast/ops`, `.../kinds`,
+`.../selector`). No external callers. The rename is a pure mechanical substitution:
+`go mod edit -module github.com/mattdurham/grv` + sed over 24 files.
+
+go.mod current module: `github.com/lthiery/goast`, go version 1.25.5.
+
+### mcp-go v0.54.0: StdioServer.Listen API
+
+The key discovery: `ServeStdio` is a convenience wrapper. The underlying method is:
+
+```go
+func (s *StdioServer) Listen(ctx context.Context, stdin io.Reader, stdout io.Writer) error
+```
+
+This means serving MCP over a Unix socket connection is straightforward:
+```go
+stdioServer := server.NewStdioServer(mcpServer)
+conn, _ := listener.Accept()
+go stdioServer.Listen(ctx, conn, conn)  // conn implements both io.Reader and io.Writer
+```
+
+No custom JSON-RPC loop needed. The existing StdioServer handles all protocol framing.
+
+One important limitation: `stdioSession` is a package-level variable (not per-connection) in
+the current mcp-go implementation. This means the StdioServer is designed for one concurrent
+client. For the daemon use case (one connection at a time from the MCP client), this is fine.
+
+### Current main.go / server.go
+
+`main.go` (19 lines): creates MCPServer, calls RegisterTools, calls ServeStdio.
+`server.go` (~280 lines): RegisterTools function registering 25 tools via mcp.NewTypedToolHandler.
+
+The binary is named by `go build -o goast` or by module path inference. No hardcoded binary name
+in source. Rename just requires changing the module path and the string literals "goast" in
+main.go (server name, log prefix).
+
+### go.mod Dependencies
+
+No cobra, no CLI framework. Current deps: mark3labs/mcp-go, google/jsonschema-go, google/uuid,
+pmezard/go-difflib, santhosh-tekuri/jsonschema, spf13/cast, yosida95/uritemplate,
+golang.org/x/{mod,sync,text,tools}.
+
+All standard library packages needed for the daemon (os/exec, net, syscall, os/signal) are
+available without new dependencies.
+
+### Spec-Driven Modules
+
+No SPECS.md, NOTES.md, TESTS.md, BENCHMARKS.md, or CLAUDE.md present in any directory.
+No spec constraints. No NOTE invariants in .go files.
+
+### mcp-go StdioServer Limitation: stdioSessionInstance
+
+Inspecting the Listen code:
+```go
+// line 539-540 of stdio.go:
+if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
+```
+
+`stdioSessionInstance` is a package-level `stdioSession` variable — not a local. This means
+concurrent calls to `Listen` on the same `StdioServer` would share session state. For the
+daemon pattern (one MCP client connecting via socket, one connection active at a time), this
+is not a problem. If concurrent connections were needed, we'd need to create a new
+`StdioServer` per connection. For now: accept one connection at a time.
+
+---
+
+## 2026-05-20 - Approaches Considered (Module Rename + CLI Daemon)
+
+### Approach 1: Manual dispatch on os.Args (Recommended)
+
+4 subcommands: no args (stdio), start, stop, status.
+No external CLI framework. Dispatch on `os.Args[1]` with a switch statement.
+
+```go
+func main() {
+    if len(os.Args) < 2 || isStdioMode() {
+        runStdio()
+        return
+    }
+    switch os.Args[1] {
+    case "start":  runStart(os.Args[2:])
+    case "stop":   runStop(os.Args[2:])
+    case "status": runStatus()
+    case "daemon": runDaemon(os.Args[2:])  // internal, called by start
+    default:       runStdio()  // unknown arg → fall through to stdio
+    }
+}
+```
+
+`isStdioMode()` checks `!term.IsTerminal(int(os.Stdin.Fd()))` to detect piped stdin (MCP client
+spawning the process). This means `grv` with no args on a terminal shows usage; `grv` with
+piped stdin acts as stdio MCP server (backward-compatible with existing MCP configs).
+
+**Pros:**
+- Zero new dependencies
+- Fits in ~250 lines of new code in main.go + cmd/ package
+- Perfectly adequate for 4 subcommands
+- Easy to read and maintain
+
+**Cons:**
+- No auto-generated --help formatting
+- Manual flag parsing for start/stop (just --dir)
+
+**Fits existing patterns:** Yes — minimal dependencies philosophy matches the project.
+
+### Approach 2: Cobra
+
+Use `github.com/spf13/cobra` for subcommand routing.
+
+**Pros:**
+- Auto-generated help text
+- Standard --flag parsing
+
+**Cons:**
+- New dependency (cobra is heavy: pflag, etc.)
+- Overkill for 4 subcommands
+- The project already avoids heavy dependencies
+
+**Fits existing patterns:** No.
+
+### Approach 3: Subpackages per command (cmd/start/, cmd/stop/, etc.)
+
+Organize each subcommand in its own subpackage.
+
+**Pros:**
+- Good separation for larger CLIs
+
+**Cons:**
+- Overkill for 4 simple commands
+- More files to navigate
+- The logic is simple enough to live in one cmd/daemon.go file
+
+**Fits existing patterns:** Partially.
+
+---
+
+### Daemon Socket Path Design
+
+**Decision: `~/.grv/<base58(sha256(absdir))[:8]>.sock`**
+
+Rationale:
+- Same binary serves multiple directories — need to disambiguate
+- 8 chars of base58(sha256) gives 48 bits of entropy — collision probability negligible
+- Files: `.sock`, `.pid`, `.log` — all in `~/.grv/`
+
+Implementation:
+```go
+func grvDir() string {
+    home, _ := os.UserHomeDir()
+    return filepath.Join(home, ".grv")
+}
+
+func socketHash(absdir string) string {
+    h := sha256.Sum256([]byte(absdir))
+    // base58 encode first 6 bytes → 8 chars
+    return base58Encode(h[:6])
+}
+
+func socketPath(absdir string) string {
+    return filepath.Join(grvDir(), socketHash(absdir)+".sock")
+}
+```
+
+For base58: implement a minimal encoder (alphabet is standard Bitcoin base58: 123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz). ~20 lines of code. No dependency.
+
+Alternative: hex encoding. Simpler but longer (12 hex chars vs 8 base58). Either works. Use
+hex for simplicity — 8 hex chars (32 bits of hash prefix) is sufficient for personal use.
+
+**Final decision: hex encoding of first 4 bytes of sha256** — no base58 dependency, human-readable,
+sufficient uniqueness: `fmt.Sprintf("%x", sha256.Sum256([]byte(absdir))[:4])` → 8 hex chars.
+
+---
+
+### MCP over Unix Socket
+
+Using `StdioServer.Listen(ctx, conn, conn)`:
+
+```go
+// In daemon mode:
+ln, err := net.Listen("unix", sockPath)
+mcpSvr := server.NewMCPServer("grv", "0.1.0", server.WithToolCapabilities(false))
+RegisterTools(mcpSvr)
+stdioSvr := server.NewStdioServer(mcpSvr)
+
+for {
+    conn, err := ln.Accept()
+    if err != nil { break }
+    go func(c net.Conn) {
+        defer c.Close()
+        touchActivity()  // reset idle timer
+        stdioSvr.Listen(ctx, c, c)
+    }(conn)
+}
+```
+
+Because `stdioSessionInstance` is package-level, we should serialize connections rather than
+serve concurrently. Simplest approach: accept one at a time (no goroutine for Accept):
+
+```go
+for {
+    conn, err := ln.Accept()
+    if err != nil { break }
+    touchActivity()
+    stdioSvr.Listen(ctx, conn, conn)  // blocks until client closes
+    conn.Close()
+}
+```
+
+This is correct for stdio MCP protocol — MCP clients connect, do their work, disconnect.
+No concurrent sessions needed.
+
+Note: `server.NewStdioServer` needs to be called once, outside the loop. But the
+`stdioSessionInstance` package var means state persists across connections (e.g., initialized
+flag). Check if `stdioSession.Initialize()` is idempotent — it stores via `atomic.Bool.Store`,
+so repeated initialization is safe.
+
+---
+
+### Daemon Start / Re-exec Pattern
+
+Go has no `fork()`. Standard pattern: re-exec with a sentinel subcommand.
+
+```
+grv start [dir]
+  1. Compute absdir (default: cwd)
+  2. Check pidFile — if exists and process alive: "daemon already running"
+  3. os.MkdirAll(grvDir())
+  4. Open logFile for append
+  5. cmd := exec.Command(os.Args[0], "daemon", "--socket", sockPath, "--dir", absdir)
+     cmd.Stdout = logFile
+     cmd.Stderr = logFile
+     cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}  // detach from terminal
+  6. cmd.Start()  // returns immediately, no Wait
+  7. Write cmd.Process.Pid to pidFile
+  8. Wait up to 1 second for sockPath to appear (poll every 50ms)
+  9. Report success or timeout
+
+grv daemon --socket SOCK --dir DIR
+  1. os.MkdirAll(grvDir())
+  2. net.Listen("unix", sockPath)
+  3. Idle timeout goroutine
+  4. Signal handler for SIGTERM → cleanup + exit
+  5. Accept loop
+```
+
+`Setsid: true` creates a new session, detaching the daemon from the controlling terminal.
+The daemon's stdin is inherited as nil (cmd.Stdin = nil → /dev/null effectively).
+
+**PID file race condition**: `grv start` writes the PID after `cmd.Start()`. The daemon itself
+could also write the PID from inside. Simpler: have `grv start` write the PID (it has the Pid
+from `cmd.Process.Pid`). No need for daemon to write its own PID.
+
+**Is-alive check for PID file**: `syscall.Kill(pid, 0)` returns nil if process exists,
+`os.ErrProcessDone` or `syscall.ESRCH` if dead. Use this in `grv stop` and `grv status`.
+
+---
+
+### Idle Timeout
+
+```go
+var lastActivity atomic.Int64  // Unix nanoseconds
+
+func touchActivity() {
+    lastActivity.Store(time.Now().UnixNano())
+}
+
+func idleWatcher(timeout time.Duration) {
+    ticker := time.NewTicker(5 * time.Minute)
+    defer ticker.Stop()
+    for range ticker.C {
+        last := time.Unix(0, lastActivity.Load())
+        if time.Since(last) > timeout {
+            log.Println("idle timeout reached, exiting")
+            os.Exit(0)
+        }
+    }
+}
+```
+
+`touchActivity()` is called:
+1. On each new connection accepted
+2. Optionally: wrapped around each tool handler via server middleware
+
+For option 2, mcp-go v0.54.0 has `s.Use(mw ...ToolHandlerMiddleware)`. A middleware that
+calls `touchActivity()` on each tool call is clean:
+
+```go
+mcpSvr.Use(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+    return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        touchActivity()
+        return next(ctx, req)
+    }
+})
+```
+
+Check the `ToolHandlerMiddleware` type in mcp-go — if available, use it. If not, touching
+per-connection is sufficient (any connection resets the timer).
+
+---
+
+### grv stop
+
+```go
+func runStop(args []string) {
+    absdir := resolveDir(args)
+    sockPath := socketPath(absdir)
+    pidPath := pidPath(absdir)
+
+    pidBytes, err := os.ReadFile(pidPath)
+    if err != nil { fmt.Println("no daemon running"); return }
+    pid, _ := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+    
+    proc, err := os.FindProcess(pid)
+    if err != nil || syscall.Kill(pid, 0) != nil {
+        os.Remove(pidPath)
+        os.Remove(sockPath)
+        fmt.Println("stale PID file removed")
+        return
+    }
+    proc.Signal(syscall.SIGTERM)
+    fmt.Printf("sent SIGTERM to pid %d\n", pid)
+    os.Remove(pidPath)
+    os.Remove(sockPath)
+}
+```
+
+---
+
+### grv status
+
+```go
+func runStatus() {
+    grvDir := grvDir()
+    entries, _ := os.ReadDir(grvDir)
+    for _, e := range entries {
+        if !strings.HasSuffix(e.Name(), ".pid") { continue }
+        pidBytes, _ := os.ReadFile(filepath.Join(grvDir, e.Name()))
+        pid, _ := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+        alive := syscall.Kill(pid, 0) == nil
+        hash := strings.TrimSuffix(e.Name(), ".pid")
+        status := "running"
+        if !alive { status = "dead (stale)" }
+        fmt.Printf("%s  pid=%d  %s\n", hash, pid, status)
+    }
+}
+```
+
+No need to reverse the hash to a directory path — the hash is sufficient for identification.
+If we want human-readable output, store the absdir in a `.dir` file alongside the `.pid`.
+
+---
+
+## 2026-05-20 - Approaches Considered (final structure)
+
+### Approach A: Everything in main.go (Simple)
+
+Expand main.go to ~300 lines with all subcommand logic inline.
+
+**Pros:** Single file, no package boundary overhead.
+**Cons:** main.go becomes a grab-bag. Hard to test individual subcommands.
+
+### Approach B: cmd/ subpackage (Recommended)
+
+```
+main.go           — parse os.Args, dispatch
+cmd/
+  stdio.go        — runStdio()
+  daemon.go       — runDaemon(), Accept loop, idle timeout
+  start.go        — runStart(), re-exec
+  stop.go         — runStop()
+  status.go       — runStatus()
+  paths.go        — grvDir(), socketPath(), pidPath(), logPath(), socketHash()
+```
+
+**Pros:**
+- Clean separation, each file ~50-80 lines
+- cmd/paths.go is shared utility (no duplication)
+- Testable: cmd/ package functions can be unit-tested
+- Follows standard Go project layout
+
+**Cons:**
+- Slightly more files
+
+**Fits existing patterns:** Yes — the project uses subpackages (ops/, editor/, kinds/, etc.).
+
+### Approach C: Single cmd.go file at top level
+
+All subcommand logic in a `cmd.go` file alongside main.go (same package main).
+
+**Pros:** No subpackage needed.
+**Cons:** Everything in package main. Less clean.
+
+---
+
+## 2026-05-20 - Recommendation (Module Rename + CLI Daemon)
+
+### Chosen Approach
+
+**Module rename**: Mechanical — `go mod edit` + sed over 24 files + update string literals.
+
+**CLI structure**: Approach B — `cmd/` subpackage with manual dispatch. No cobra.
+
+**Socket path**: `~/.grv/<hex8>.sock` where hex8 = first 4 bytes of sha256(absdir) as hex.
+Companion files: `.pid` (same prefix) and `.log` (same prefix). `.dir` file to store human-
+readable absdir for `grv status`.
+
+**Daemon start**: Re-exec pattern — `grv start` spawns `grv daemon --socket S --dir D` via
+`exec.Command` with `Setsid: true`, redirects stdout/stderr to logFile, calls `cmd.Start()`.
+
+**MCP over Unix socket**: `server.NewStdioServer(mcpSvr)` + `stdioSvr.Listen(ctx, conn, conn)`.
+Accept one connection at a time (sequential, not concurrent) — safe because stdioSession is
+package-level in mcp-go.
+
+**Idle timeout**: `atomic.Int64` lastActivity, background ticker every 5 minutes, exit after
+1 hour idle. Touch on each new connection accepted.
+
+**stdin detection for stdio mode**:
+```go
+func isStdioMode() bool {
+    stat, _ := os.Stdin.Stat()
+    return (stat.Mode() & os.ModeCharDevice) == 0  // stdin is a pipe, not a terminal
+}
+```
+
+**Implementation Strategy:**
+
+1. Module rename:
+   - `go mod edit -module github.com/mattdurham/grv`
+   - `find . -name "*.go" | xargs sed -i 's|github.com/lthiery/goast|github.com/mattdurham/grv|g'`
+   - Update string literals in main.go: "goast" → "grv" (server name, log prefix)
+   - `go build ./...` to verify
+
+2. Create `cmd/paths.go`: grvDir, socketHash, socketPath, pidPath, logPath, dirFilePath
+
+3. Create `cmd/daemon.go`: runDaemon + idleWatcher + touchActivity
+
+4. Create `cmd/start.go`: runStart with re-exec + PID write + socket poll
+
+5. Create `cmd/stop.go`: runStop with SIGTERM
+
+6. Create `cmd/status.go`: runStatus reading .pid files
+
+7. Update `main.go`:
+   - Change log prefix to "grv: "
+   - Add dispatch: `runStdio` (default/piped), `start`, `stop`, `status`, `daemon`
+   - `runStdio` = existing behavior (RegisterTools + ServeStdio)
+
+**Key Decisions:**
+
+- **No new dependencies**: crypto/sha256 (stdlib), net (stdlib), syscall (stdlib), os/exec (stdlib).
+- **Sequential daemon connections**: One MCP client at a time — matches MCP protocol design.
+- **`grv daemon` is internal**: Not documented as user-facing. Called only by `grv start`.
+- **Default behavior when args unknown**: Fall through to stdio mode for backward compatibility.
+- **Daemon architecture is Constraint C**: Daemon exists for future caching warmup; MCP clients
+  continue to use stdio. The daemon is not yet used by MCP clients in this iteration.
+
+**Risks Identified:**
+
+- **stdioSessionInstance package-level var**: If mcp-go v0.54.0 changes this to a local var
+  in a future version, concurrent connections would work. For now, sequential is safe.
+  Mitigation: wrap Accept loop without goroutine.
+
+- **macOS socket path length limit**: Unix socket paths have a 104-char limit on macOS (vs 108
+  on Linux). `~/.grv/` + 8 chars + `.sock` = well under limit. No risk.
+
+- **`Setsid` on Linux vs macOS**: `syscall.SysProcAttr{Setsid: true}` works on both. No issue.
+
+- **Race between grv start writing PID and socket appearing**: The socket is created inside
+  `runDaemon` after `net.Listen`. The PID is written by `runStart` after `cmd.Start()`. Since
+  `cmd.Start()` returns before the daemon has called `net.Listen`, the socket poll is needed.
+  500ms-1s should be sufficient for the daemon to reach the Listen call.
+
+**Open Questions:**
+
+- Should `grv start` without a dir argument default to cwd or refuse? Recommendation: default
+  to cwd (same as how go tools work: `go build` uses cwd by default).
+
+- Should the stdio mode print anything to stderr on terminal invocation (no piped stdin, no
+  known subcommand)? Recommendation: print usage to stderr and exit 1.
+
+---
+
+## 2026-05-20 - BRAINSTORM COMPLETE (Module Rename + CLI Daemon)
+
+**Status:** Complete
+**Recommendation:** Manual dispatch CLI in cmd/ subpackage, re-exec daemon pattern, StdioServer.Listen over Unix socket
+**Next Phase:** PLAN
+
+Key findings for the planner:
+1. 24 files need import path substitution: `sed -i 's|github.com/lthiery/goast|github.com/mattdurham/grv|g'`
+2. `StdioServer.Listen(ctx, io.Reader, io.Writer)` is the correct API for Unix socket serving — no custom protocol loop needed
+3. stdioSessionInstance is package-level in mcp-go v0.54.0 — accept connections sequentially, not concurrently
+4. Re-exec pattern: `grv start` spawns `grv daemon --socket S --dir D` via exec.Command with SysProcAttr{Setsid: true}
+5. Socket path: `~/.grv/<hex(sha256(absdir)[:4])>.sock` — 8 hex chars, no new deps
+6. Idle timeout: `atomic.Int64` lastActivity + 5-minute ticker + 1-hour threshold + os.Exit(0)
+7. stdin detection: `(stat.Mode() & os.ModeCharDevice) == 0` distinguishes pipe from terminal
+8. No new dependencies required — all needed packages are in stdlib
+

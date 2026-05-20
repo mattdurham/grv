@@ -3,17 +3,15 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/lthiery/goast/kinds"
-	"github.com/lthiery/goast/meta"
-	"github.com/lthiery/goast/selector"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
+	"github.com/mattdurham/grv/kinds"
+	"github.com/mattdurham/grv/meta"
+	"github.com/mattdurham/grv/selector"
 )
 
 // ErrorResponse is the JSON error shape returned for navigation failures.
@@ -24,11 +22,11 @@ type ErrorResponse struct {
 	Available []string           `json:"available,omitempty"`
 }
 
-func toolError(msg string) *mcp.CallToolResult {
-	return mcp.NewToolResultError(msg)
+func errResult(msg string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("%s", msg)
 }
 
-func navError(err *selector.NavigateError) *mcp.CallToolResult {
+func navErrResult(err *selector.NavigateError) (json.RawMessage, error) {
 	resp := ErrorResponse{
 		Error:     err.Error(),
 		AtStep:    err.AtStep,
@@ -36,7 +34,15 @@ func navError(err *selector.NavigateError) *mcp.CallToolResult {
 		Available: err.Available,
 	}
 	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultError(string(b))
+	return nil, fmt.Errorf("%s", string(b))
+}
+
+func okResult(v any) (json.RawMessage, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	return json.RawMessage(b), nil
 }
 
 // ASTListArgs is the argument struct for ast_list.
@@ -53,10 +59,10 @@ type ASTListItem struct {
 }
 
 // HandleASTList implements the ast_list tool.
-func HandleASTList(ctx context.Context, req mcp.CallToolRequest, args ASTListArgs) (*mcp.CallToolResult, error) {
+func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 	f, fset, _, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	var items []ASTListItem
@@ -101,8 +107,7 @@ func HandleASTList(ctx context.Context, req mcp.CallToolRequest, args ASTListArg
 		}
 	}
 
-	b, _ := json.Marshal(items)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(items)
 }
 
 func recvTypeString(field *ast.Field) string {
@@ -131,36 +136,35 @@ type ASTQueryResponse struct {
 }
 
 // HandleASTQuery implements the ast_query tool.
-func HandleASTQuery(ctx context.Context, req mcp.CallToolRequest, args ASTQueryArgs) (*mcp.CallToolResult, error) {
+func HandleASTQuery(args ASTQueryArgs) (json.RawMessage, error) {
 	f, fset, src, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	// Empty path → file-level info
 	if len(args.Path) == 0 || string(args.Path) == "null" || string(args.Path) == "[]" {
 		m := meta.FileInfo(fset, src, f)
 		resp := ASTQueryResponse{Meta: m}
-		b, _ := json.Marshal(resp)
-		return mcp.NewToolResultText(string(b)), nil
+		return okResult(resp)
 	}
 
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	node, _, navErr := selector.Navigate(f, steps)
 	if navErr != nil {
 		if ne, ok := navErr.(*selector.NavigateError); ok {
-			return navError(ne), nil
+			return navErrResult(ne)
 		}
-		return toolError(navErr.Error()), nil
+		return errResult(navErr.Error())
 	}
 
 	nodeJSON, err := kinds.MarshalNode(node)
 	if err != nil {
-		return toolError(fmt.Sprintf("marshal node: %v", err)), nil
+		return errResult(fmt.Sprintf("marshal node: %v", err))
 	}
 
 	resp := ASTQueryResponse{Node: nodeJSON}
@@ -175,8 +179,7 @@ func HandleASTQuery(ctx context.Context, req mcp.CallToolRequest, args ASTQueryA
 	// Compute metadata
 	resp.Meta = meta.Compute(fset, src, node, nil, len(steps))
 
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 // ASTQueryManyArgs is the argument struct for ast_query_many.
@@ -186,30 +189,30 @@ type ASTQueryManyArgs struct {
 }
 
 // HandleASTQueryMany implements the ast_query_many tool.
-func HandleASTQueryMany(ctx context.Context, req mcp.CallToolRequest, args ASTQueryManyArgs) (*mcp.CallToolResult, error) {
+func HandleASTQueryMany(args ASTQueryManyArgs) (json.RawMessage, error) {
 	f, fset, src, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	results := make([]ASTQueryResponse, 0, len(args.Paths))
 	for _, pathJSON := range args.Paths {
 		var steps []selector.PathStep
 		if err := json.Unmarshal(pathJSON, &steps); err != nil {
-			return toolError(fmt.Sprintf("parse path: %v", err)), nil
+			return errResult(fmt.Sprintf("parse path: %v", err))
 		}
 
 		node, _, navErr := selector.Navigate(f, steps)
 		if navErr != nil {
 			if ne, ok := navErr.(*selector.NavigateError); ok {
-				return navError(ne), nil
+				return navErrResult(ne)
 			}
-			return toolError(navErr.Error()), nil
+			return errResult(navErr.Error())
 		}
 
 		nodeJSON, err := kinds.MarshalNode(node)
 		if err != nil {
-			return toolError(fmt.Sprintf("marshal node: %v", err)), nil
+			return errResult(fmt.Sprintf("marshal node: %v", err))
 		}
 
 		resp := ASTQueryResponse{Node: nodeJSON}
@@ -222,8 +225,7 @@ func HandleASTQueryMany(ctx context.Context, req mcp.CallToolRequest, args ASTQu
 		results = append(results, resp)
 	}
 
-	b, _ := json.Marshal(results)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(results)
 }
 
 // ASTMetaArgs is the argument struct for ast_meta.
@@ -233,32 +235,30 @@ type ASTMetaArgs struct {
 }
 
 // HandleASTMeta implements the ast_meta tool.
-func HandleASTMeta(ctx context.Context, req mcp.CallToolRequest, args ASTMetaArgs) (*mcp.CallToolResult, error) {
+func HandleASTMeta(args ASTMetaArgs) (json.RawMessage, error) {
 	f, fset, src, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	if len(args.Path) == 0 || string(args.Path) == "null" || string(args.Path) == "[]" {
 		m := meta.FileInfo(fset, src, f)
-		b, _ := json.Marshal(m)
-		return mcp.NewToolResultText(string(b)), nil
+		return okResult(m)
 	}
 
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	node, _, navErr := selector.Navigate(f, steps)
 	if navErr != nil {
 		if ne, ok := navErr.(*selector.NavigateError); ok {
-			return navError(ne), nil
+			return navErrResult(ne)
 		}
-		return toolError(navErr.Error()), nil
+		return errResult(navErr.Error())
 	}
 
 	m := meta.Compute(fset, src, node, nil, len(steps))
-	b, _ := json.Marshal(m)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(m)
 }

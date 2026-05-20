@@ -8,28 +8,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/ops"
 )
 
-func fileText(t *testing.T, result *mcp.CallToolResult) string {
+func fileText(t *testing.T, result json.RawMessage, err error) string {
 	t.Helper()
-	if result.IsError {
-		t.Fatalf("tool returned error: %v", result.Content)
+	if err != nil {
+		t.Fatalf("tool returned error: %v", err)
 	}
-	tc, ok := result.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
-	}
-	return tc.Text
+	return string(result)
 }
 
 func TestHandleFileRead_Basic(t *testing.T) {
-	result, err := ops.HandleFileRead(ctx, emptyReq, ops.FileReadArgs{File: testdataSimple})
+	result, err := ops.HandleFileRead(ops.FileReadArgs{File: testdataSimple})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := fileText(t, result)
+	text := fileText(t, result, err)
 	var resp ops.FileReadResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -46,28 +41,22 @@ func TestHandleFileRead_Basic(t *testing.T) {
 }
 
 func TestHandleFileRead_NotFound(t *testing.T) {
-	result, err := ops.HandleFileRead(ctx, emptyReq, ops.FileReadArgs{File: "/no/such/file.txt"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
+	_, err := ops.HandleFileRead(ops.FileReadArgs{File: "/no/such/file.txt"})
+	if err == nil {
 		t.Error("expected error for missing file")
 	}
 }
 
 func TestHandleFileRead_EmptyPath(t *testing.T) {
-	result, err := ops.HandleFileRead(ctx, emptyReq, ops.FileReadArgs{File: ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
+	_, err := ops.HandleFileRead(ops.FileReadArgs{File: ""})
+	if err == nil {
 		t.Error("expected error for empty file path")
 	}
 }
 
 func TestHandleFileWrite_CreateNew(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notes.txt")
-	result, err := ops.HandleFileWrite(ctx, emptyReq, ops.FileWriteArgs{
+	result, err := ops.HandleFileWrite(ops.FileWriteArgs{
 		File:    path,
 		Content: "hello world\n",
 		DryRun:  false,
@@ -75,7 +64,7 @@ func TestHandleFileWrite_CreateNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := fileText(t, result)
+	text := fileText(t, result, err)
 	var resp ops.FileWriteResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -93,7 +82,7 @@ func TestHandleFileWrite_Overwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	os.WriteFile(path, []byte("key: old\n"), 0644)
 
-	result, err := ops.HandleFileWrite(ctx, emptyReq, ops.FileWriteArgs{
+	result, err := ops.HandleFileWrite(ops.FileWriteArgs{
 		File:    path,
 		Content: "key: new\n",
 		DryRun:  false,
@@ -101,7 +90,7 @@ func TestHandleFileWrite_Overwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := fileText(t, result)
+	text := fileText(t, result, err)
 	var resp ops.FileWriteResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -123,7 +112,7 @@ func TestHandleFileWrite_DryRun(t *testing.T) {
 	original := `{"v":1}`
 	os.WriteFile(path, []byte(original), 0644)
 
-	result, err := ops.HandleFileWrite(ctx, emptyReq, ops.FileWriteArgs{
+	result, err := ops.HandleFileWrite(ops.FileWriteArgs{
 		File:    path,
 		Content: `{"v":2}`,
 		DryRun:  true,
@@ -131,7 +120,7 @@ func TestHandleFileWrite_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := fileText(t, result)
+	text := fileText(t, result, err)
 	var resp ops.FileWriteResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -139,7 +128,6 @@ func TestHandleFileWrite_DryRun(t *testing.T) {
 	if !resp.Changed {
 		t.Error("expected changed=true (diff should exist)")
 	}
-	// File must NOT be changed
 	got, _ := os.ReadFile(path)
 	if string(got) != original {
 		t.Errorf("dry_run should not modify file; got %q", string(got))
@@ -151,7 +139,7 @@ func TestHandleFileWrite_NoChange(t *testing.T) {
 	content := "unchanged\n"
 	os.WriteFile(path, []byte(content), 0644)
 
-	result, err := ops.HandleFileWrite(ctx, emptyReq, ops.FileWriteArgs{
+	result, err := ops.HandleFileWrite(ops.FileWriteArgs{
 		File:    path,
 		Content: content,
 		DryRun:  false,
@@ -159,7 +147,7 @@ func TestHandleFileWrite_NoChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := fileText(t, result)
+	text := fileText(t, result, err)
 	var resp ops.FileWriteResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -170,11 +158,8 @@ func TestHandleFileWrite_NoChange(t *testing.T) {
 }
 
 func TestHandleFileWrite_EmptyPath(t *testing.T) {
-	result, err := ops.HandleFileWrite(ctx, emptyReq, ops.FileWriteArgs{File: "", Content: "x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
+	_, err := ops.HandleFileWrite(ops.FileWriteArgs{File: "", Content: "x"})
+	if err == nil {
 		t.Error("expected error for empty file path")
 	}
 }

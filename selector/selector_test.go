@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"testing"
 
-	"github.com/lthiery/goast/selector"
+	"github.com/mattdurham/grv/selector"
 )
 
 func parseFile(t *testing.T, path string) *ast.File {

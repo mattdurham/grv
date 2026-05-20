@@ -3,15 +3,13 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/lthiery/goast/selector"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
+	"github.com/mattdurham/grv/selector"
 )
 
 // ASTDeleteArgs is the argument struct for ast_delete.
@@ -22,13 +20,13 @@ type ASTDeleteArgs struct {
 }
 
 // HandleASTDelete implements the ast_delete tool.
-func HandleASTDelete(ctx context.Context, req mcp.CallToolRequest, args ASTDeleteArgs) (*mcp.CallToolResult, error) {
+func HandleASTDelete(args ASTDeleteArgs) (json.RawMessage, error) {
 	if isReadonly(args.File) {
-		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, _ *token.FileSet) error {
@@ -40,17 +38,16 @@ func HandleASTDelete(ctx context.Context, req mcp.CallToolRequest, args ASTDelet
 	})
 	if err != nil {
 		if ne, ok := err.(*selector.NavigateError); ok {
-			return navError(ne), nil
+			return navErrResult(ne)
 		}
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	resp := map[string]interface{}{
 		"changed": result.Changed,
 		"diff":    result.Diff,
 	}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 func deleteFromList(ctx selector.ParentContext) error {

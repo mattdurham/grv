@@ -5,28 +5,23 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/ops"
 )
 
-func dirText(t *testing.T, result *mcp.CallToolResult) string {
+func dirText(t *testing.T, result json.RawMessage, err error) string {
 	t.Helper()
-	if result.IsError {
-		t.Fatalf("tool returned error: %v", result.Content)
+	if err != nil {
+		t.Fatalf("tool returned error: %v", err)
 	}
-	tc, ok := result.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
-	}
-	return tc.Text
+	return string(result)
 }
 
 func TestHandleASTDirectory_Basic(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "../testdata"})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -37,11 +32,11 @@ func TestHandleASTDirectory_Basic(t *testing.T) {
 }
 
 func TestHandleASTDirectory_GoSymbols(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "../testdata"})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -90,11 +85,11 @@ func TestHandleASTDirectory_GoSymbols(t *testing.T) {
 }
 
 func TestHandleASTDirectory_NonGoFiles(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "../testdata"})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -116,11 +111,11 @@ func TestHandleASTDirectory_NonGoFiles(t *testing.T) {
 }
 
 func TestHandleASTDirectory_Subdirs(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "../testdata"})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -139,11 +134,11 @@ func TestHandleASTDirectory_Subdirs(t *testing.T) {
 }
 
 func TestHandleASTDirectory_ReadonlyField(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "../testdata"})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -157,11 +152,11 @@ func TestHandleASTDirectory_ReadonlyField(t *testing.T) {
 
 func TestHandleASTDirectory_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: dir})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -172,32 +167,26 @@ func TestHandleASTDirectory_EmptyDir(t *testing.T) {
 }
 
 func TestHandleASTDirectory_InvalidDir(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "/no/such/dir"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
+	_, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "/no/such/dir"})
+	if err == nil {
 		t.Error("expected error for nonexistent directory")
 	}
 }
 
 func TestHandleASTDirectory_EmptyArg(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
+	_, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: ""})
+	if err == nil {
 		t.Error("expected error for empty dir")
 	}
 }
 
 func TestHandleASTDirectory_GoSymbolsDetailed(t *testing.T) {
 	// Exercises parseGoFile more deeply — methods, globals
-	result, err := ops.HandleASTDirectory(ctx, emptyReq, ops.ASTDirectoryArgs{Dir: "../testdata"})
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result)
+	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)

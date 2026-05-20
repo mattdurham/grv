@@ -11,7 +11,7 @@ import (
 
 type CaseClause struct {
 	KindField string            `json:"kind"`
-	List      []json.RawMessage `json:"list"`  // null = default case
+	List      []json.RawMessage `json:"list"` // null = default case
 	Body      []json.RawMessage `json:"body"`
 }
 

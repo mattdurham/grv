@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lthiery/goast/kinds"
+	"github.com/mattdurham/grv/kinds"
 )
 
 func TestGoldenPathHelloProgram(t *testing.T) {

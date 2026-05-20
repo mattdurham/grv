@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lthiery/goast/kinds"
+	"github.com/mattdurham/grv/kinds"
 )
 
 // roundTripJSON constructs a node struct directly, calls ToAST, calls FromAST on result,
@@ -26,7 +26,9 @@ func roundTripJSON(t *testing.T, node kinds.Node, expectedKind string) {
 	}
 
 	// Round-trip: get the kind string and marshal back
-	var peek struct{ Kind string `json:"kind"` }
+	var peek struct {
+		Kind string `json:"kind"`
+	}
 	if err := json.Unmarshal(orig, &peek); err != nil {
 		t.Fatalf("unmarshal peek: %v", err)
 	}
@@ -55,7 +57,6 @@ func roundTripJSON(t *testing.T, node kinds.Node, expectedKind string) {
 		t.Errorf("round-trip mismatch:\n  orig: %s\n  rt:   %s", origJSON, rtJSON)
 	}
 }
-
 
 func mustMarshal(v interface{}) json.RawMessage {
 	b, err := json.Marshal(v)

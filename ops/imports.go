@@ -3,14 +3,12 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
@@ -40,9 +38,9 @@ type ImportInfo struct {
 }
 
 // HandleAddImport implements the ast_add_import tool.
-func HandleAddImport(ctx context.Context, req mcp.CallToolRequest, args AddImportArgs) (*mcp.CallToolResult, error) {
+func HandleAddImport(args AddImportArgs) (json.RawMessage, error) {
 	if isReadonly(args.File) {
-		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
 	result, err := editor.Edit(args.File, false, func(f *ast.File, fset *token.FileSet) error {
 		if args.Alias == "" {
@@ -53,38 +51,36 @@ func HandleAddImport(ctx context.Context, req mcp.CallToolRequest, args AddImpor
 		return nil
 	})
 	if err != nil {
-		return toolError(fmt.Sprintf("add import: %v", err)), nil
+		return errResult(fmt.Sprintf("add import: %v", err))
 	}
 	resp := map[string]interface{}{
 		"changed": result.Changed,
 		"diff":    result.Diff,
 	}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 // HandleDeleteImport implements the ast_delete_import tool.
-func HandleDeleteImport(ctx context.Context, req mcp.CallToolRequest, args DeleteImportArgs) (*mcp.CallToolResult, error) {
+func HandleDeleteImport(args DeleteImportArgs) (json.RawMessage, error) {
 	result, err := editor.Edit(args.File, false, func(f *ast.File, fset *token.FileSet) error {
 		astutil.DeleteImport(fset, f, args.Path)
 		return nil
 	})
 	if err != nil {
-		return toolError(fmt.Sprintf("delete import: %v", err)), nil
+		return errResult(fmt.Sprintf("delete import: %v", err))
 	}
 	resp := map[string]interface{}{
 		"changed": result.Changed,
 		"diff":    result.Diff,
 	}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 // HandleListImports implements the ast_list_imports tool.
-func HandleListImports(ctx context.Context, req mcp.CallToolRequest, args ListImportsArgs) (*mcp.CallToolResult, error) {
+func HandleListImports(args ListImportsArgs) (json.RawMessage, error) {
 	f, _, _, err := editor.ParseFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse: %v", err)), nil
+		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
 	// Collect all used idents to detect import usage
@@ -110,8 +106,7 @@ func HandleListImports(ctx context.Context, req mcp.CallToolRequest, args ListIm
 		imports = append(imports, ImportInfo{Path: path, Alias: alias, Used: used})
 	}
 
-	b, _ := json.Marshal(imports)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(imports)
 }
 
 func collectUsedIdents(f *ast.File) map[string]bool {

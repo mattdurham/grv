@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
+	"github.com/mattdurham/grv/ops"
 )
 
 func writeTempFile(t *testing.T, content string) string {
@@ -29,7 +29,7 @@ func TestHandleASTRename_Function(t *testing.T) {
 	path := writeTempFile(t, "package p\nfunc Add(x, y int) int { return Add(x, y) }\n")
 
 	pathJSON, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Sum",
@@ -38,10 +38,7 @@ func TestHandleASTRename_Function(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTRename: %v", err)
 	}
-	if result.IsError {
-		t.Fatalf("tool error: %v", result.Content)
-	}
-	text := resultText(t, result)
+	text := resultText(t, result, nil)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -69,7 +66,7 @@ func TestHandleASTRename_DryRun(t *testing.T) {
 	path := writeTempFile(t, src)
 
 	pathJSON, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Sum",
@@ -78,7 +75,7 @@ func TestHandleASTRename_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTRename: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, nil)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -89,7 +86,6 @@ func TestHandleASTRename_DryRun(t *testing.T) {
 		t.Errorf("diff should contain Sum, got: %q", diff)
 	}
 
-	// File should be unchanged
 	data, _ := os.ReadFile(path)
 	if string(data) != src {
 		t.Error("dry_run=true should not modify the file")
@@ -101,7 +97,7 @@ func TestHandleASTRename_Type(t *testing.T) {
 	path := writeTempFile(t, src)
 
 	pathJSON, _ := json.Marshal([]map[string]string{{"kind": "TypeSpec", "name": "Dog"}})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Animal",
@@ -110,7 +106,7 @@ func TestHandleASTRename_Type(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTRename: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, nil)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -124,7 +120,6 @@ func TestHandleASTRename_Type(t *testing.T) {
 	if !strings.Contains(string(data), "Animal") {
 		t.Error("file should contain Animal after rename")
 	}
-	// "Dog" as a standalone identifier should be gone; "NewDog" (different ident) is unchanged
 	if strings.Contains(string(data), "type Dog ") || strings.Contains(string(data), "() Dog ") {
 		t.Error("file should not contain Dog type reference after rename")
 	}
@@ -135,7 +130,7 @@ func TestHandleASTRename_Method(t *testing.T) {
 	path := writeTempFile(t, src)
 
 	pathJSON, _ := json.Marshal([]map[string]interface{}{{"kind": "FuncDecl", "name": "Greet", "recv": "*Dog"}})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Hello",
@@ -144,7 +139,7 @@ func TestHandleASTRename_Method(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTRename: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, nil)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -167,17 +162,14 @@ func TestHandleASTRename_BadPath(t *testing.T) {
 	path := writeTempFile(t, "package p\nfunc Foo() {}\n")
 
 	pathJSON, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "NonExistent"}})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	_, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Bar",
 		DryRun: false,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
-		t.Error("expected tool error for non-existent path")
+	if err == nil {
+		t.Error("expected error for non-existent path")
 	}
 }
 
@@ -186,20 +178,16 @@ func TestHandleASTRename_EmptyTo(t *testing.T) {
 	path := writeTempFile(t, src)
 
 	pathJSON, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Foo"}})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	_, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "",
 		DryRun: false,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
-		t.Error("expected tool error for empty To")
+	if err == nil {
+		t.Error("expected error for empty To")
 	}
 
-	// File should be unchanged
 	data, _ := os.ReadFile(path)
 	if string(data) != src {
 		t.Error("file should be unchanged when To is empty")
@@ -207,7 +195,6 @@ func TestHandleASTRename_EmptyTo(t *testing.T) {
 }
 
 func TestHandleASTRename_StructField(t *testing.T) {
-	// Exercises extractDeclName for *ast.Field
 	src := `package p
 type Dog struct {
 	Name string
@@ -220,7 +207,7 @@ func (d *Dog) GetName() string { return d.Name }
 		{"kind": "StructType"},
 		{"kind": "Field", "name": "Name"},
 	})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Label",
@@ -229,7 +216,7 @@ func (d *Dog) GetName() string { return d.Name }
 	if err != nil {
 		t.Fatalf("HandleASTRename field: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, nil)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -244,7 +231,6 @@ func (d *Dog) GetName() string { return d.Name }
 }
 
 func TestHandleASTRename_Ident(t *testing.T) {
-	// Exercises extractDeclName for *ast.Ident — navigate to Sel of SelectorExpr
 	src := `package p
 import "fmt"
 func F() {
@@ -252,7 +238,6 @@ func F() {
 }
 `
 	path := writeTempFile(t, src)
-	// Navigate to FuncDecl(F) → Body → ExprStmt[0] → X → Sel (an *ast.Ident)
 	pathJSON, _ := json.Marshal([]map[string]interface{}{
 		{"kind": "FuncDecl", "name": "F"},
 		{"kind": "Body"},
@@ -260,24 +245,18 @@ func F() {
 		{"kind": "X"},
 		{"kind": "Sel"},
 	})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "Printf",
 		DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("HandleASTRename ident: %v", err)
-	}
-	// May succeed or produce a tool error (Sel is Println — renaming it is valid)
-	// We just verify no panic and a response is returned.
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	// May succeed or return an error — just verify no panic
+	_ = result
+	_ = err
 }
 
 func TestHandleASTRename_VarDecl(t *testing.T) {
-	// Exercises extractDeclName for *ast.ValueSpec via VarDecl
 	src := `package p
 var maxCount = 10
 func F() int { return maxCount }
@@ -286,23 +265,18 @@ func F() int { return maxCount }
 	pathJSON, _ := json.Marshal([]map[string]interface{}{
 		{"kind": "VarDecl"},
 	})
-	result, err := ops.HandleASTRename(ctx, emptyReq, ops.ASTRenameArgs{
+	result, err := ops.HandleASTRename(ops.ASTRenameArgs{
 		File:   path,
 		Path:   pathJSON,
 		To:     "limit",
 		DryRun: true,
 	})
 	if err != nil {
-		t.Fatalf("HandleASTRename var: %v", err)
-	}
-	if result.IsError {
-		// VarDecl navigates to the GenDecl, not ValueSpec — may not rename cleanly.
-		// Just verify no panic; error is acceptable for this edge case.
+		// VarDecl navigates to GenDecl, not ValueSpec — error is acceptable
 		return
 	}
-	text := resultText(t, result)
 	var resp map[string]interface{}
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+	if err := json.Unmarshal(result, &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 }

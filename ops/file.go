@@ -3,14 +3,12 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 
-	"github.com/lthiery/goast/diff"
-	"github.com/lthiery/goast/editor"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/diff"
+	"github.com/mattdurham/grv/editor"
 )
 
 // FileReadArgs is the argument struct for file_read.
@@ -26,21 +24,20 @@ type FileReadResult struct {
 }
 
 // HandleFileRead implements the file_read tool.
-func HandleFileRead(ctx context.Context, req mcp.CallToolRequest, args FileReadArgs) (*mcp.CallToolResult, error) {
+func HandleFileRead(args FileReadArgs) (json.RawMessage, error) {
 	if args.File == "" {
-		return toolError("file is required"), nil
+		return errResult("file is required")
 	}
 	content, err := os.ReadFile(args.File)
 	if err != nil {
-		return toolError(fmt.Sprintf("read: %v", err)), nil
+		return errResult(fmt.Sprintf("read: %v", err))
 	}
 	result := FileReadResult{
 		Content:  string(content),
 		Size:     len(content),
 		Readonly: isReadonly(args.File),
 	}
-	b, _ := json.Marshal(result)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(result)
 }
 
 // FileWriteArgs is the argument struct for file_write.
@@ -57,12 +54,12 @@ type FileWriteResult struct {
 }
 
 // HandleFileWrite implements the file_write tool.
-func HandleFileWrite(ctx context.Context, req mcp.CallToolRequest, args FileWriteArgs) (*mcp.CallToolResult, error) {
+func HandleFileWrite(args FileWriteArgs) (json.RawMessage, error) {
 	if args.File == "" {
-		return toolError("file is required"), nil
+		return errResult("file is required")
 	}
 	if isReadonly(args.File) {
-		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
 
 	newContent := []byte(args.Content)
@@ -72,13 +69,13 @@ func HandleFileWrite(ctx context.Context, req mcp.CallToolRequest, args FileWrit
 
 	diffStr, err := diff.Files(args.File, existing, newContent)
 	if err != nil {
-		return toolError(fmt.Sprintf("diff: %v", err)), nil
+		return errResult(fmt.Sprintf("diff: %v", err))
 	}
 
 	changed := diffStr != ""
 	if changed && !args.DryRun {
 		if err := editor.WriteAtomic(args.File, newContent); err != nil {
-			return toolError(fmt.Sprintf("write: %v", err)), nil
+			return errResult(fmt.Sprintf("write: %v", err))
 		}
 	}
 
@@ -86,6 +83,5 @@ func HandleFileWrite(ctx context.Context, req mcp.CallToolRequest, args FileWrit
 		Diff:    diffStr,
 		Changed: changed,
 	}
-	b, _ := json.Marshal(result)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(result)
 }

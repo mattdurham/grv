@@ -3,7 +3,6 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -12,8 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // ASTDirectoryArgs is the argument struct for ast_directory.
@@ -74,14 +71,14 @@ type ASTDirectoryResult struct {
 }
 
 // HandleASTDirectory implements the ast_directory tool.
-func HandleASTDirectory(ctx context.Context, req mcp.CallToolRequest, args ASTDirectoryArgs) (*mcp.CallToolResult, error) {
+func HandleASTDirectory(args ASTDirectoryArgs) (json.RawMessage, error) {
 	if args.Dir == "" {
-		return toolError("dir is required"), nil
+		return errResult("dir is required")
 	}
 
 	entries, err := os.ReadDir(args.Dir)
 	if err != nil {
-		return toolError(fmt.Sprintf("read dir: %v", err)), nil
+		return errResult(fmt.Sprintf("read dir: %v", err))
 	}
 
 	result := ASTDirectoryResult{
@@ -129,8 +126,7 @@ func HandleASTDirectory(ctx context.Context, req mcp.CallToolRequest, args ASTDi
 		}
 	}
 
-	b, _ := json.Marshal(result)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(result)
 }
 
 func parseGoFile(path string) (*GoFileEntry, error) {

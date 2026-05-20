@@ -1,6 +1,30 @@
 # Agent Context
 
 ## Role & Principles
+Run background processes asynchronously using goroutines with context management
+
+> id: 8e3b88bc-8a6c-4b2d-9eb2-17fa12d891de
+
+# Behavioral Rule
+
+**Decompose complex systems into stateless, composable units that communicate through immutable data structures rather than shared state or modified signatures.**
+
+---
+
+## Why This Captures the Pattern
+
+- **Stateless + composable** = the core architectural choice
+- **Immutable data + explicit communication** = the mechanism enabling it
+- **Rather than shared state/signature changes** = contrasts with the anti-patterns avoided
+
+This generalizes beyond pipelines to any domain requiring concurrency, testability, and reusability (streaming systems, functional middleware, event processors, etc.).
+
+> id: eaa02943-9b77-4f28-92fd-3d0e31db92ef
+
+Monitor daemon state changes and restart with updated binaries to maintain system live status
+
+> id: cee9f7b5-6143-454d-8751-207ba857b06c
+
 # General Rule
 
 **Verify implementation against intent through layered validation, then document failure modes to prevent recurrence.**
@@ -24,323 +48,237 @@ This heuristic generalizes across code quality, guidance accuracy, system design
 
 # Behavioral Rule
 
-**Specify → Implement → Validate**: Solve problems by establishing clear contracts and documentation first, ensure code adheres to specification through comprehensive testing, then gate delivery with automated quality checks.
+**"Fix the root cause with minimum code change, then immediately test the specific edge case that broke."**
 
 Or more concisely:
 
-**"Design-first, test-gated problem solving"** — Define the problem rigorously before coding, then validate against the definition before shipping.
+**"Minimal fix + targeted test = prevention."**
 
-> id: 9a8ca827-9182-4946-8c8a-8724b0c927d2
+This rule captures the essence: identify what condition was missed (root cause), change only what's necessary to handle it, and lock in a test that would catch the regression.
 
-# Behavioral Rule
-
-**Assign to the dereferenced pointer target, not to the pointer variable itself, when mutating heap-allocated state that will be reused.**
-
-Or more generally:
-
-**Distinguish between rebinding a reference and mutating the referenced object; mutate the object when you intend reuse.**
-
----
-
-## Why This Matters
-
-- Rebinding the local pointer (`p = &s`) only changes what the local variable points to; it doesn't update what the pool will retrieve
-- Mutating through dereference (`*p = ...`) modifies the actual object in the pool
-- This pattern extends beyond sync.Pool to any scenario where a pointer is held elsewhere (caches, registries, shared references)
-
-> id: 5a1da579-468e-4b41-abf8-2f77da070b8f
-
-# Concise Behavioral Rule
-
-**Test design assumptions against reality early and often; let integration failures guide simplification.**
-
-Or more tersely:
-
-**Find problems through building, not planning.**
-
----
-
-**Why this captures it**: The skill isn't about a specific technique (integration testing, incremental development) but the meta-pattern of *using real constraints discovered during assembly to drive design toward simplicity*. The rule explains why each phase worked:
-
-- Early integration caught the index-writer gap (assumption ≠ reality)
-- Real queries exposed the unreachable fast path (spec ≠ implementation)
-- Benchmarking revealed the 30% cost was unacceptable (theory ≠ constraints)
-- Each gap prompted simplification rather than workarounds
-
-This is fundamentally different from "design thoroughly first"—it's **"design enough to build, then let building teach you what actually matters."**
-
-> id: 9a885a05-1214-43a5-b3a9-bfcfea405343
-
-# Behavioral Rule
-
-**Nil out resource references before returning objects to pools to prevent unintended retention; verify that resource cleanup is complete across all call sites before considering a migration finished.**
-
-Or more concisely:
-
-**Clear all references before pooling; verify migrations are exhaustive.**
-
-> id: def4649c-acd4-40ba-a6a1-f39d8cab5a3b
+> id: 9d1de0d1-e4eb-47fd-81ea-36c226e77985
 
 
 ## Relevant Techniques
-# Skill: Debugging Type Mismatch Bugs in Dynamic Data Processing
+# Skill: Asynchronous Task Orchestration with File-Based Progress Tracking
 
-**Core Pattern**: Identifying and fixing silent data loss caused by incomplete type handling when processing dynamically-typed data structures (especially JSON-unmarshaled `interface{}` values).
+**Core Pattern**: Execute long-running operations in the background using unique task IDs and persistent output logging to temporary files, enabling non-blocking workflow continuation and interim progress monitoring without polling task status directly.
+
+**Key Components**:
+- Background task execution for parallel/concurrent processing
+- Unique task identification and output file mapping
+- File-based progress visibility and completion verification
+- Exit code validation for success confirmation
+
+**Value**: Improves efficiency and responsiveness by decoupling long-running operations from main workflow while maintaining full observability into task progress and results.
+
+> id: 64b304cc-af31-41d6-97bb-14341314e6e2
+
+# Skill: Defensive Concurrent Resource Lifecycle Management
+
+**Core Pattern:** Design resource cleanup sequences that are thread-safe, order-dependent, and resilient to partial failures through explicit state nullification and defensive nil-checks.
+
+**Key Techniques:**
+1. **Ordered Protocol-Level Cleanup** – Release resources in reverse dependency order (cancel goroutines → close protocol layer → close sockets) with explicit nil-assignment after each step to prevent double-closes and stale references
+2. **Mutex + Local Reference Pattern** – Protect shared state with locks and capture pointer snapshots before passing to goroutines, preventing race conditions during concurrent reconnection or reallocation
+3. **Graceful Degradation via Nil-Checks** – Check resources before closing and allow partial cleanup success, enabling the system to handle incompletely-initialized or partially-failed connections without cascading failures
+
+**Context:** Essential for production systems with long-running background goroutines (keepalive, provisioning) where timing between cleanup operations and concurrent access determines whether resources leak, hang, or panic.
+
+> id: 072ffffa-aab2-48c1-ab22-f2cbe4d83f9a
+
+# Skill: Protocol-Aware Layered Resource Cleanup
+
+**Core Pattern**: When closing wrapped or nested resources (e.g., TCP socket wrapped by SSH client), close from the **outermost protocol layer inward**, ensuring each layer properly terminates before the next is closed.
+
+**Key Techniques**:
+1. **Protocol-First Closure** – Close the higher-level abstraction first (SSH client) to trigger proper protocol messages (e.g., `SSH_MSG_DISCONNECT`) before closing the raw transport layer
+2. **Nil-Check-Then-Nil Pattern** – Safely close resources by assigning to a local variable, nilifying the reference, then operating on the local copy to prevent double-closes and race conditions
+3. **Fallback Closure** – Retain lower-level cleanup (raw TCP close) as a safety net for edge cases where the upper layer never fully initialized
+4. **Behavioral Verification in Tests** – Validate closure by attempting operations on saved references rather than just checking nil states, catching subtle cases where references are cleared but resources remain open
+
+**Why It Matters**: Skipping protocol-level cleanup leaves server-side connections improperly terminated, orphaned goroutines, and socket leaks—bypassing graceful shutdown handshakes that operating systems and remote services expect.
+
+> id: 88c2677e-efa5-4ad0-9ce3-58f257f0cce6
+
+# Skill: Defensive Nil-Safety in Conditional Component Initialization
+
+**Core Pattern:**
+When components are conditionally initialized based on application mode or configuration, design their cleanup/lifecycle methods to safely handle nil receivers rather than scattering nil checks across all call sites.
+
+**Key Principle:**
+Make cleanup methods idempotent no-ops when called on uninitialized (nil) components. This decouples initialization logic from shutdown logic and prevents crashes when teardown paths don't track which mode/state the application is in.
+
+**Implementation Pattern:**
+```go
+func (ng *Engine) Close() error {
+    if ng == nil {
+        return nil  // Safe no-op for uninitialized components
+    }
+    // ... cleanup logic
+}
+```
+
+**When to Apply:**
+- Public lifecycle methods (`Close()`, `Shutdown()`, `SetQueryLogger()`) on optionally-initialized resources
+- Components that vary by application mode (agent vs. normal mode)
+- Cleanup code called unconditionally during shutdown paths
+
+**Why It Matters:**
+- Eliminates hidden nil cases in conditional initialization architectures
+- Reduces cognitive load on callers (no need to track initialization state)
+- Follows idiomatic Go patterns for defensive pointer receivers
+- Requires complementary test coverage for nil and non-nil cases
+
+> id: 61a1b905-a455-4187-a66d-815ef67d7644
+
+# Skill: Dependency Chain Management & Unblocking Strategy
+
+**Core Pattern**: Identifying critical path blockers in sequential work, synchronizing task status updates with deliverables, and actively unblocking downstream work through either:
+- **Explicit completion signaling** (status updates matched to actual deliverables)
+- **Productive waiting** (studying patterns/assumptions while blocked rather than idling)
+- **Early validation** (pre-wiring reviews, specification-first approaches, and pre-handoff verification)
 
 **Key Competencies**:
+1. **Map blocking relationships** – Recognize when single-task failures cascade and cause idle time
+2. **Decouple status from progress** – Distinguish between task completion and dependency readiness; update both
+3. **Parallelize where possible** – Create minimal viable specs/scaffolds early to reduce sequential bottlenecks
+4. **Validate before handoff** – Verify actual implementation against specs via code review or grepping, not task labels
+5. **Communicate blockers proactively** – Surface idle time and dependency gaps early to keep pipelines moving
 
-1. **Recognize JSON-to-Go Type Mapping Quirks** – Understanding that Go's `encoding/json` defaults all numbers to `float64` when unmarshaling into `interface{}`, causing type switches that only check for `string` and `bool` to silently drop numeric values.
-
-2. **Audit for Symmetric Type-Handling Gaps** – Finding that incomplete type switches often exist in multiple places within the same code path (nested switches, loops, branching logic) and requiring fixes to be applied consistently across all locations.
-
-3. **Distinguish Silent Failures from Loud Ones** – Recognizing that `default: continue` patterns hide bugs by discarding unhandled types instead of failing visibly, making root-cause diagnosis difficult without before/after data comparison.
-
-4. **Apply Appropriate Type Conversion Formatting** – Choosing correct conversion strategies for different numeric types (e.g., `strconv.FormatFloat(v, 'g', -1, 64)` for preserving precision and avoiding noise in float representation).
-
-5. **Verify Assumptions with Concrete Testing** – Testing actual language behavior rather than relying on assumptions about type unmarshaling and library APIs.
-
-> id: 18a48215-cea2-438a-bb5a-5fa3d9762542
-
-# Shared Skill: Systematic Problem Verification & Quality Assurance
-
-These memories demonstrate a consistent pattern of **validating implementation correctness through comprehensive testing and quality gates before proceeding**, rather than assuming work is complete or correct.
-
-## Core Pattern:
-1. **Verify existing state** (don't assume; check tests, builds, spec compliance)
-2. **Run complete quality checks** (unit tests, static analysis, deadcode detection, lint)
-3. **Document design rationale** alongside code (specs, notes, test comments with traceability)
-4. **Fix root causes, not symptoms** (identify why tests fail or checks pass, then address the source)
-5. **Confirm clean state independently** (use build tools, not just IDE or cached status)
-
-## Key Applications Across Memories:
-- Discovering existing implementations before redundant work
-- Fixing column type bugs that broke downstream logic
-- Identifying silent parsing failures and handling gracefully
-- Validating allocation optimizations with actual metrics
-- Ensuring negation semantics are preserved in predicate pushdown
-- Resolving IDE vs. actual build discrepancies
-
-**The skill is defensive verification**: commit only after confirming the implementation satisfies tests, specs, and quality standards—with evidence, not assumptions.
-
-> id: 078c9699-b49f-4963-8039-ebb2e89ef1e2
-
-# Skill: Documentation-Implementation Synchronization & Structural Verification
-
-**Core Pattern:** Identifying and resolving misalignments between code contracts (interfaces, documentation) and their implementations through systematic verification passes.
-
-**Key Competencies:**
-1. **Multi-layer Sync Detection** – Catching gaps across interfaces, implementations, and documentation comments that survive initial review
-2. **Staged Verification** – Using secondary review passes to surface secondary issues (doc mismatches, naming conventions) that survive first-pass checks
-3. **Structural Consistency** – Enforcing naming conventions, method signatures, and contract compliance across distributed modules
-4. **Completeness Validation** – Verifying interface implementations are complete before dependent tasks proceed, and that documentation accurately reflects actual complexity/behavior
-
-**Application:** Prevents subtle runtime failures and maintenance debt by treating documentation-implementation drift as a medium-priority architectural concern, not just a cosmetic issue. Most effective in refactoring contexts where interfaces and implementations span multiple files or tasks.
-
-> id: 37a13b3f-8953-4f30-b1aa-e25c9859ec51
-
-# Shared Skill: Extensible Architecture Through Pluggable Interfaces
-
-**Core Pattern:** Design systems using **interface-based abstraction layers** that allow new implementations to be added without modifying existing code.
-
-**Key Characteristics:**
-1. **Minimal Interface Contracts** — Define small, focused interfaces (e.g., `Binding`, `StructValidator`, `setter`) that encapsulate a single responsibility
-2. **Centralized Registry/Factory** — Use a router function or registry (e.g., `Default()`, `var` blocks) to map requests to appropriate implementations based on context (Content-Type, HTTP method, data source)
-3. **Shared Core Infrastructure** — Delegate implementation details to reusable helper functions (e.g., `mappingByPtr()`, `setWithProperType()`) rather than duplicating logic in each binding type
-4. **Dual-API Patterns** — Provide two method families (strict vs. lenient, explicit vs. auto-detect) that share the same underlying engine to avoid code duplication while offering behavioral choice
-
-**Why It Matters:** New formats, validators, or data sources can be added by implementing a single interface and registering it—no core logic changes needed. This is how Gin supports JSON, XML, YAML, headers, query strings, and URI parameters with minimal code.
-
-> id: a6f932c7-cd20-42f8-9790-4455749a9d92
-
-# Skill: Systematic Refactoring Verification and Completion
-
-**Core Pattern:** Identifying and preventing incomplete refactors through comprehensive cross-codebase validation and structured completion checklists.
-
-**Key Competencies:**
-1. **Tracing refactor scope** – Following API changes through all call sites, dependencies, and usage patterns (not just definitions)
-2. **Build-state validation** – Requiring passing builds, tests, and static analysis before marking tasks complete
-3. **Checklist-driven reviews** – Creating structured verification lists for type changes, API migrations, and signature updates
-4. **Dead code identification** – Detecting orphaned references, unused functions, and partially-removed old implementations
-5. **Documentation pairing** – Linking implementation changes to explanatory comments about edge cases and behavioral contracts
-
-**Applied to prevent:**
-- Type signature mismatches between callers and definitions
-- Silent API breaks (nil checks removed, sentinel value behavior undocumented)
-- Orphaned dead code left behind after partial migrations
-- Resource leaks from incomplete cleanup path updates
-- Task handoffs in broken/in_progress states
-
-> id: 983e1b8a-5d99-4df8-8c1d-99e8360cc2ee
+> id: 2a026a53-856e-438f-bd25-6f9bb87f6aca
 
 
 ## Current Project Context
 # Key Insights
 
-## 1. **Build-Time Conditional Compilation for Optional Dependencies**
-The codebase uses Go build tags (`//go:build !nomsgpack` vs `//go:build nomsgpack`) to maintain two versions of the binding package—one with MessagePack support and one without. This solves the problem of optional dependencies by allowing users to exclude msgpack at compile time, reducing binary size and dependencies for projects that don't need it. **Decision**: Duplicate the core binding logic across two files rather than using runtime checks.
+## 1. **Asynchronous Cleanup Caused Resource Leaks**
+   - **Problem**: Both provisioners used goroutines to defer `comm.Disconnect()` until context cancellation, leaving SSH connections open after commands completed.
+   - **Impact**: Connection resources weren't cleaned up synchronously, causing them to linger until goroutine scheduling.
 
-## 2. **Extensible Binding Interface Architecture**
-Three distinct interfaces (`Binding`, `BindingBody`, `BindingUri`) handle different data sources (request object, raw bytes, URL parameters), with multiple format implementations (JSON, XML, YAML, TOML, Protocol Buffers, BSON, etc.). This modular approach allows new formats to be added without modifying existing code. **Solution**: Each format gets its own file with a concrete type that satisfies the appropriate interface(s).
+## 2. **Solution: Replace Async Context Monitoring with Defer Pattern**
+   - **Decision**: Replaced context-listening goroutines with simple `defer comm.Disconnect()` statements.
+   - **Benefit**: Guarantees synchronous cleanup at function exit, eliminating the race condition between command completion and actual disconnection. This is more reliable and simpler than waiting for context cancellation.
 
-## 3. **Content-Type Driven Format Selection with Sensible Defaults**
-The `Default()` function routes requests to the correct binding handler based on HTTP method and Content-Type header, defaulting to form binding for unknown types. This eliminates the need for explicit format selection in most cases. **Problem solved**: Ambiguous request data interpretation is handled automatically while remaining explicit and testable.
+## 3. **Simplified Control Flow**
+   - **Removed**: Unnecessary context wrapping (`context.WithCancel`) and goroutine spawning in `remote-exec`.
+   - **Result**: Cleaner code that directly manages resource lifecycle without relying on goroutine scheduling timing.
 
-> id: 7e17695f-b873-476a-9f6a-d04c4053a012
+> id: 7110fd81-9ad3-4c5d-8ce9-0eb7aa1c4f92
 
-# Key Insights
+# Key Insights: SSH Communicator Connection Management
 
-## 1. **Export Naming Convention Mismatch**
-**Problem:** Test files referenced `ToBytes`, `FromBytes`, `Cosine`, `NeighborID`, and `Edge` (capitalized), but implementation used lowercase field names like `neighborID`.
+## 1. **Nil-Check Pattern for Safe Resource Cleanup**
+**Decision:** Set `c.conn = nil` after closing connections rather than relying solely on Close() operations.
+**Value:** Prevents double-close errors and ensures subsequent nil-checks catch stale references—essential for reconnection logic where old connections must be explicitly nullified before new ones are established.
 
-**Solution:** Go requires exported (public) identifiers to be capitalized. Aligned all struct fields and function names to follow Go conventions—capitalized for public API, lowercase for private internal fields.
+## 2. **Race Condition Prevention Through Local References**
+**Problem:** Long-running keepalive goroutines could race with connection reconnects.
+**Solution:** Use sync.Mutex on the Communicator struct and create local copies of pointers (e.g., `sshClient := c.client`) before passing into goroutines. This prevents goroutines from accessing reallocated pointers during reconnection.
 
-**Impact:** This is fundamental Go visibility; catching it early prevents widespread refactoring later.
+## 3. **Two-Layer Liveness Detection Over Simple Ping/Pong**
+**Decision:** Implement both periodic SendRequest + response timeout rather than basic heartbeat.
+**Value:** Detects both dead connections (no response) and stuck connections (response timeout). Goroutines can independently close connections when liveness fails, preventing indefinite hangs during long-running provisioning operations.
 
----
-
-## 2. **Pre-built Dependencies Shortened Development Path**
-**Decision:** The `vector` package (bytes encoding, cosine similarity, Ollama embedder) was already fully implemented and tested before starting Phase 4.
-
-**Action Taken:** Rather than rebuilding, verified tests passed and moved immediately to the `graph` package.
-
-**Lesson:** Always audit existing code first; regenerating tested components wastes effort and introduces regression risk.
-
----
-
-## 3. **Test-First Design Caught Implementation Gaps Early**
-**Pattern:** Writing test files before implementations (e.g., `graph_test.go` before `graph.go`) exposed missing type definitions (`Edge`, `adjacency` struct fields) immediately via compiler errors.
-
-**Benefit:** Compilation errors are faster feedback than runtime test failures; this forced the implementation design to match the test API contract upfront, reducing iteration cycles.
-
-> id: dde00612-aba2-4998-9ee1-7af2d29462d0
-
-# Summary of Key Insights
-
-## 1. **Interface Specification as Boundary Definition**
-   - **Decision**: Created comprehensive SPECS.md documents for `logqlparser` and `executor` packages that explicitly define responsibility boundaries, input/output semantics, and invariants.
-   - **Problem**: Unclear ownership of concerns (parsing → AST → compilation → execution) led to potential integration issues.
-   - **Solution**: Documented exact mappings (e.g., LogQL string → AST via `Parse`, AST → `vm.Program` via `Compile`, pipeline execution via `internal/modules/logql`), enabling clear contracts between modules and reducing ambiguity in future development.
-
-## 2. **Deliberate Design Choices Documented for Maintainability**
-   - **Decision**: Captured context-dependent parsing rules (e.g., `!=` as label matcher vs. line filter), unsupported negation for block pruning, and workarounds like `Complement(ScanContains)` for not-contains operations.
-   - **Problem**: Complex semantic rules and implementation trade-offs were not documented, risking misunderstandings during maintenance or extension.
-   - **Solution**: Added detailed spec entries (LQP-SPEC-001 through LQP-SPEC-017) with cross-references to implementation files and explicit notes on why certain design choices exist (e.g., NOTES.md §2).
-
-## 3. **Quality Assurance via Automated Linting and Comprehensive Testing**
-   - **Decision**: Fixed linting issues (unnecessary type conversions) and verified complete test coverage with race detection before merge.
-   - **Problem**: Code quality regressions and subtle concurrency bugs could slip through without strict tooling.
-   - **Solution**: Ensured `make precommit` (gofumpt, golines, golangci-lint, betteralign, cyclomatic complexity, tests) passes cleanly, establishing a repeatable quality gate for future changes.
-
-> id: 7cc9f595-8e56-4956-8b48-6e47bb43c44f
+> id: 60f0d84f-49c9-45e6-87ef-a70640c67b03
 
 # Key Insights
 
-1. **Structured Implementation Approach**: Successfully implemented a complete roaring bitmap index package by following a logical progression—dependency management → format specification → core components (bitmap accumulator, writer, reader) → comprehensive tests. This modular workflow ensured each layer built on stable foundations.
+## 1. **Strict CLI Contract & Error Handling**
+The codebase enforces invariants around output formatting and error reporting: JSON output must always be valid (even on partial failures), all errors go to stderr, and non-zero exit codes are mandatory on failure. This ensures reliable scripting and tool integration.
 
-2. **Type System & Interface Alignment**: Encountered and resolved a signature mismatch between the test's `ReadAt` implementation and the `ReaderProvider` interface's `DataType` requirements. This highlighted the importance of verifying interface contracts early and iterating quickly on test implementations to catch integration issues.
+**Decision**: Maintain these invariants rigorously across all commands to preserve CLI predictability.
 
-3. **Incremental Validation**: Built confidence through frequent compilation checks after each major component (format.go → bitmap.go → writer.go → reader.go), catching structural issues early before investing effort in comprehensive testing.
+## 2. **Daemon Initialization Consistency**
+All DB-touching commands require `ensureDaemon` to be called first, with explicit exceptions only for `watch` and `config` subcommands. This prevents accidental daemon state issues.
 
-> id: bc801ad4-1f25-415e-8511-a81b67ba55bc
+**Decision**: Document and enforce this pattern as a code review requirement; consider using a wrapper or middleware to make it implicit.
 
-# Key Insights on Interface Implementation Pattern
+## 3. **Metrics Integration Requires Store Access**
+A recent change shows the metrics server now needs access to the daemon store (`metrics.NewServer(metricsAddr, reg, daemon.store)`), indicating monitoring capabilities are being tied to live runtime state.
 
-## 1. **Compile-Time Interface Verification Pattern**
-The code uses blank variable assignments (`var _ InterfaceName = (*ConcreteType)(nil)`) scattered throughout to verify at compile time that concrete types satisfy their interfaces. This prevents runtime discovery of missing method implementations and serves as self-documenting proof of interface compliance. This is a Go best practice that should be applied consistently across all interface implementations.
+**Problem encountered**: Metrics server was previously decoupled from store data.
+**Solution found**: Pass store reference explicitly to enable real-time metrics reporting.
 
-## 2. **Slice-as-Composite Type Design**
-`contentNodeIs` is a slice wrapper around `contentNodeI` that itself implements the `contentNodeI` interface by delegating to its first element. This pattern enables treating collections as single units while maintaining interface compatibility. However, it creates a risk: methods like `Path()` and `GetIdentity()` only consult the first element, which could mask bugs if slice contents diverge.
+> id: 58212840-119f-4723-8068-7b0c1c652ce6
 
-## 3. **Lazy Initialization with Reverse Indexing**
-The `contentTreeReverseIndex` uses an `initFn` closure to defer building a reverse lookup map until needed, with collision detection (marking ambiguous entries). This solves the problem of efficiently finding content nodes by filename without building indices upfront, trading lazy computation complexity for memory efficiency—but panic-on-error in the walk handler makes failures opaque.
+# Key Insights: SSH Communicator Implementation
 
-> id: 0d9411c7-a50c-48ae-9153-20f8d4f104c9
+## 1. **Thread-Safe Shared RNG with PID Multiplier**
+**Decision:** Use a single global RNG seeded with `time.Now().UnixNano() * os.Getpid()`, protected by mutex lock.
+**Problem:** Multiple RNG instances created simultaneously produce identical sequences; concurrent processes can write to the same files.
+**Solution:** Share one RNG instance across all calls and multiply seed by PID to ensure process-unique sequences, preventing collisions in parallel operations.
+
+## 2. **Connection Lifecycle Management with Cleanup**
+**Decision:** Store net.Conn and ssh.Client as mutable state with explicit lock-protected initialization in Connect().
+**Problem:** Stale connections need cleanup; concurrent access to connection state could cause data races.
+**Solution:** Clear both conn and client to nil before recreation, use sync.Mutex on Communicator struct, and defer lock release to ensure proper cleanup even on error.
+
+## 3. **Graceful Degradation via Custom Error Type**
+**Decision:** Implement a `fatalError` wrapper type with `FatalError()` method.
+**Problem:** Need to distinguish recoverable vs. unrecoverable SSH failures for appropriate retry logic.
+**Solution:** Use type assertion pattern where fatal errors implement a specific interface, allowing callers to handle critical failures (host key verification, auth) differently from transient issues.
+
+> id: 76df40f7-c558-4492-abb4-5ea3a433ccc9
+
+# Key Insights
+
+1. **Protocol-layer cleanup must precede transport-layer cleanup**: The SSH client object must be explicitly closed before the underlying TCP socket to ensure the SSH protocol sends its disconnect message (SSH_MSG_DISCONNECT). Closing only the raw socket leaves the application-level connection in an undefined state from the OS perspective, causing ESTABLISHED sockets to linger.
+
+2. **Layered resource cleanup requires proper ordering and nil-safety**: When closing nested resources (SSH client wrapping TCP connection), close the outer layer first, nil the reference to prevent double-closes, then close the inner layer. Capture errors from the protocol close but ensure the transport close always executes (using a local error variable rather than early return).
+
+3. **Missing explicit close calls are a common source of connection leaks**: The original code relied on implicit cleanup through raw socket closure, which is insufficient for stateful protocols. Always explicitly close high-level client objects even when they wrap lower-level connections—the library maintainer cannot assume the socket close will trigger protocol-level cleanup.
+
+> id: 986fcfb4-1518-479d-b5cb-235419cda00c
 
 
 ## Related Context (via graph)
-# Key Insights from Blockpack Pruning Analysis
+# Key Insights
 
-## 1. **Current Pruning is Name-Only, Not Value-Based**
-The bloom filter (`ColumnNameBloom`) only tracks which *columns are present* in a block, not their *values*. Range indices exist for specific columns but require explicit predicate constraints. This means:
-- **Problem:** Queries like `duration > 100ms` cannot prune blocks where 99% of spans exceed the threshold—the range index only helps if you know the exact min/max.
-- **Solution:** Add **per-column min/max summary statistics** (already partially available in `BlockMeta` for trace IDs) extended to user attributes. This enables range-based block skipping without scanning.
+## 1. **Root Cause: Missing SSH Protocol-Level Disconnect**
+The `Disconnect()` method closed the raw TCP socket without calling `c.client.Close()`, skipping the SSH protocol-level disconnect (`SSH_MSG_DISCONNECT`). This left TCP sockets in ESTABLISHED state indefinitely because neither side sent FIN packets to the OS.
 
-## 2. **TopK Limit Provides the Critical Escape Hatch**
-The `StreamLogsTopK` implementation with limit-based early exit is the system's best defense against scanning unnecessary blocks:
-- **Decision Made:** Process blocks in reverse temporal order (newest first); once heap is full, skip older blocks entirely.
-- **Trade-off:** Works well when query matches are recent and uniformly distributed. Breaks down for sparse matches where the limit forces scanning many old blocks to find K results.
-- **Missing:** No way to leverage value distributions (e.g., "99% of recent spans are slow") to reorder block visitation or estimate whether a block could *possibly* contain K results.
+## 2. **Impact Multiplier: Resource Creation Pattern**
+The problem was amplified by Terraform's design—each `null_resource` with `remote-exec` provisioners creates a separate communicator instance. Resources with multiple provisioner blocks leaked multiple connections, exacerbating socket exhaustion.
 
-## 3. **Add Quantile Sketches for Distribution-Aware Pruning**
-To handle the "needle in haystack" case where filtering is selective, add **KLL or T-Digest sketches** per indexed column per block:
-- **Problem Solved:** Queries like `duration > 100ms` can now estimate "this block likely contains <50 slow spans" → skip if heap already has K slower ones.
-- **Cost:** Small metadata overhead (~200 bytes per column per block for KLL sketch); computed during block write.
-- **Implementation:** Extend `BlockMeta` to include optional `QuantileSketches map[ColumnKey][]byte`; modify `pruneByIndexAll` to consult quantiles and reorder block visitation by likelihood of containing valuable results.
+## 3. **Solution: Protocol-First Cleanup Order**
+The fix calls `c.client.Close()` *before* `c.conn.Close()`, ensuring proper SSH shutdown happens at the protocol level before releasing file descriptors. The raw socket close is retained as defensive cleanup, establishing a clear teardown sequence: cancel goroutine → SSH disconnect → TCP close.
 
-> id: 117b2b12-d5a9-4a54-a7b4-f7507b00c28e
+> id: f8dff57d-cc81-45aa-8b63-d3c4d747b85a
 
-# Shared Skill: Systematic Problem Decomposition with Documentation-Driven Verification
+# Key Insights: SSH Communicator Connection Management
 
-These memories demonstrate a consistent pattern of **breaking complex technical decisions into documented components, then verifying each component independently before integration**.
+## 1. **Nil-Check Pattern for Safe Resource Cleanup**
+**Decision:** The code consistently sets `c.conn = nil` after closing connections (lines 135, 202, 331) rather than relying solely on Close() operations.
+**Why it matters:** This prevents double-close errors and ensures subsequent nil-checks catch stale references. The pattern is critical for reconnection logic where old connections must be explicitly nullified before establishing new ones.
 
-## The Core Pattern:
+## 2. **Race Condition Prevention Through Locking and Local References**
+**Problem:** Long-running keepalive goroutines could race with connection reconnects.
+**Solution:** The code uses sync.Mutex on the Communicator struct and creates local copies of the ssh client pointer (line 262: `sshClient := c.client`) before passing into goroutines. This prevents goroutines from accessing reallocated pointers during reconnection.
 
-1. **Identify the root constraint or problem** (complexity hotspots, allocation waste, API churn, coverage gaps, I/O invariants)
-2. **Document the decision rationale** explicitly (SPECS.md, NOTES.md, nolint comments, architectural notes)
-3. **Choose verification mechanisms matched to the problem type:**
-   - Structural issues → code inspection + linting
-   - Performance issues → profiling + reuse analysis
-   - API stability → additive overloads + backward-compatibility checks
-   - Quality gates → sequential tool chains (format → lint → build → test → deadcode)
-   - Architectural invariants → trace call chains + targeted test coverage
+## 3. **Graceful Connection Liveness Detection**
+**Decision:** A two-layer keepalive mechanism (periodic SendRequest + response timeout) instead of simple ping/pong.
+**Why it matters:** Detects both dead connections (no response) and stuck connections (response timeout). The goroutine can independently close `sshConn` (lines 293, 299) when liveness fails, preventing indefinite hangs during long-running provisioning operations.
 
-4. **Distinguish between transient (in-flight) vs. genuine (persistent) problems** to avoid false negatives
-5. **Separate concerns** (new code quality vs. pre-existing debt; code duplication vs. forced refactoring)
+> id: 656694a5-3a8f-48ee-a014-07e259626a14
 
-## Why This Works:
+Hey! Bob here, ready to coordinate the team.
 
-Rather than applying uniform solutions (e.g., "always refactor duplication" or "run all tests at once"), the skill involves **selecting the right verification depth for each problem class**—preventing both false positives and genuine quality drift.
+**Building:** Fix for Terraform SSH connections remaining ESTABLISHED after remote-exec provisioners complete
 
-> id: 96f7888a-ebb8-4c6e-9a6d-3e1d26af052f
+Let me analyze this issue. This is a bug in Terraform's SSH communicator — it's not a fix to the `lth` codebase, so rather than spinning up the full team workflow against the wrong repo, I'll research the root cause and produce the patch directly.
 
-Pool GC safety: always nil pointer fields (p.block = nil) in releaseXxx before Put to prevent GC retention of decoded block data. Defer scope in preFn closures: defer fires when closure returns, which is safe when fn only uses RowSet ([]int indices) that does not reference the provider. Missing pool migration: if a task says migrate ALL call sites, verify grep output shows zero remaining newXxx calls before approving — incomplete migration was the primary defect in blockColumnProviderPool task.
+> id: be3d2efd-ffc1-4cb1-a7c3-a427183a3d11
 
-> id: 6c59f9cc-2285-4c0b-b08e-583c29acb507
+Now restart the daemon with the new binary so all features activate.
 
-# Key Insights Summary
+> id: 9ea3705b-81da-4d59-ba63-cc39952c4999
 
-## 1. **LokiConverter Implementation Found; matchersToLogQL Does Not Exist**
-   - **Decision**: Located LokiConverter in `/benchmark/lokibench/converter.go` with three key methods: `LinesProcessed()`, `ResetLines()`, and `SelectLogs()`
-   - **Problem**: The `matchersToLogQL` function that was being searched for does not exist in the codebase
-   - **Solution**: LogQL conversion happens implicitly via `logSel.String()` and delegated to `blockpack.StreamLogQL()`. Actual matcher compilation is handled in `/internal/logqlparser/compile.go` which converts matchers to column predicates
+Good. The root cause is clear: `Disconnect()` in the SSH communicator cancels the keepalive goroutine and closes the raw `net.Conn`, but **never calls `c.client.Close()`**. Without a proper SSH protocol-level disconnect, the OS TCP stack never sends FIN — the socket stays ESTABLISHED.
 
-## 2. **Extensive Task Backlog Exists Across Multiple Technical Domains**
-   - **Problem**: 22 task files found covering complexity analysis, bug fixes, feature implementation, and infrastructure work across multiple modules (arena, blockio, executor, encodings, VM, etc.)
-   - **Decision**: Tasks span from low-level encoding complexity to high-level LogQL engine implementation and Docker infrastructure
-   - **Solution Needed**: Tasks are organized by domain (complexity-*.md) and by feature/fix area, but require detailed review of each file to assess priority, dependencies, and current progress status
+Let me produce the exact patch:
 
-## 3. **Immediate Action Required: Read All .bob/tasks Files for Complete Backlog Assessment**
-   - The file listing shows 22 task files but their contents (status, completion progress, blockers) are unknown
-   - Need to read each file to determine: which tasks are blocked, which are in-progress, priority ordering, and inter-task dependencies
-   - This will reveal the actual development roadmap and resource allocation needs
-
-> id: 4bed2bd1-caab-492c-a6fa-af90d5e3e276
-
-# Key Insights Summary
-
-## 1. **Discovery Task Completed Successfully**
-The investigation into trace vs. log benchmark byte-tracking patterns was completed and documented. **Decision Made**: Log benchmarks can adopt the same pattern as trace benchmarks by exporting and wrapping `TrackingReaderProvider` from `internal/modules/rw/tracking.go`. This requires minimal changes (export + wrapping) with no modifications to query execution pipeline.
-
-## 2. **Codebase Architecture Understanding**
-Explored blockpack's execution pipeline structure:
-- **executor.go**: Owns block scanning and span-level predicate evaluation; uses `queryplanner` for block selection and `vm.Program` for query execution
-- **vm/traceql_compiler.go**: Compiles TraceQL filters into dual-purpose `Program` objects with both `ColumnPredicate` (fast bulk scanning) and `Instructions` (flexibility)
-- **executor/predicates.go**: Converts compiled programs to pruning predicates, with special handling for OR queries (bloom-only) vs. AND queries (range-aware)
-
-## 3. **Problem Encountered & Solution Pattern**
-The exploration revealed that blockpack uses a **two-level filtering strategy**: (1) block-level pruning via bloom filters and range indexes via `buildPredicates()`, and (2) span-level evaluation via `program.ColumnPredicate()`. This pattern works for both trace and log queries—log benchmarks just need the infrastructure layer (TrackingReaderProvider export) to measure bytes_read consistently.
-
-> id: 7e20f705-09da-45c2-a206-61b8855b725c
+> id: fdfce8eb-337d-4a2a-881b-d8f3a294e6a9
 
 
 ## Memory IDs (for exploration)
@@ -349,23 +287,23 @@ Use these IDs to explore further:
   lth graph show --from <id>      — traverse graph edges
   lth graph ppr --seeds <id,...>  — personalized pagerank from seeds
 
+  8e3b88bc-8a6c-4b2d-9eb2-17fa12d891de
+  eaa02943-9b77-4f28-92fd-3d0e31db92ef
+  cee9f7b5-6143-454d-8751-207ba857b06c
   c121b38e-136d-4758-bf98-5c481e17d6d3
-  9a8ca827-9182-4946-8c8a-8724b0c927d2
-  5a1da579-468e-4b41-abf8-2f77da070b8f
-  9a885a05-1214-43a5-b3a9-bfcfea405343
-  def4649c-acd4-40ba-a6a1-f39d8cab5a3b
-  18a48215-cea2-438a-bb5a-5fa3d9762542
-  078c9699-b49f-4963-8039-ebb2e89ef1e2
-  37a13b3f-8953-4f30-b1aa-e25c9859ec51
-  a6f932c7-cd20-42f8-9790-4455749a9d92
-  983e1b8a-5d99-4df8-8c1d-99e8360cc2ee
-  7e17695f-b873-476a-9f6a-d04c4053a012
-  dde00612-aba2-4998-9ee1-7af2d29462d0
-  7cc9f595-8e56-4956-8b48-6e47bb43c44f
-  bc801ad4-1f25-415e-8511-a81b67ba55bc
-  0d9411c7-a50c-48ae-9153-20f8d4f104c9
-  117b2b12-d5a9-4a54-a7b4-f7507b00c28e
-  96f7888a-ebb8-4c6e-9a6d-3e1d26af052f
-  6c59f9cc-2285-4c0b-b08e-583c29acb507
-  4bed2bd1-caab-492c-a6fa-af90d5e3e276
-  7e20f705-09da-45c2-a206-61b8855b725c
+  9d1de0d1-e4eb-47fd-81ea-36c226e77985
+  64b304cc-af31-41d6-97bb-14341314e6e2
+  072ffffa-aab2-48c1-ab22-f2cbe4d83f9a
+  88c2677e-efa5-4ad0-9ce3-58f257f0cce6
+  61a1b905-a455-4187-a66d-815ef67d7644
+  2a026a53-856e-438f-bd25-6f9bb87f6aca
+  7110fd81-9ad3-4c5d-8ce9-0eb7aa1c4f92
+  60f0d84f-49c9-45e6-87ef-a70640c67b03
+  58212840-119f-4723-8068-7b0c1c652ce6
+  76df40f7-c558-4492-abb4-5ea3a433ccc9
+  986fcfb4-1518-479d-b5cb-235419cda00c
+  f8dff57d-cc81-45aa-8b63-d3c4d747b85a
+  656694a5-3a8f-48ee-a014-07e259626a14
+  be3d2efd-ffc1-4cb1-a7c3-a427183a3d11
+  9ea3705b-81da-4d59-ba63-cc39952c4999
+  fdfce8eb-337d-4a2a-881b-d8f3a294e6a9

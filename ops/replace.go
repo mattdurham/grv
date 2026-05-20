@@ -3,16 +3,14 @@
 package ops
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
 
-	"github.com/lthiery/goast/editor"
-	"github.com/lthiery/goast/kinds"
-	"github.com/lthiery/goast/selector"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/editor"
+	"github.com/mattdurham/grv/kinds"
+	"github.com/mattdurham/grv/selector"
 )
 
 // ASTReplaceArgs is the argument struct for ast_replace.
@@ -24,18 +22,18 @@ type ASTReplaceArgs struct {
 }
 
 // HandleASTReplace implements the ast_replace tool.
-func HandleASTReplace(ctx context.Context, req mcp.CallToolRequest, args ASTReplaceArgs) (*mcp.CallToolResult, error) {
+func HandleASTReplace(args ASTReplaceArgs) (json.RawMessage, error) {
 	if isReadonly(args.File) {
-		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
-		return toolError(fmt.Sprintf("parse path: %v", err)), nil
+		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
 	kindNode, err := kinds.UnmarshalNode(args.Node)
 	if err != nil {
-		return toolError(fmt.Sprintf("parse node: %v", err)), nil
+		return errResult(fmt.Sprintf("parse node: %v", err))
 	}
 
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, _ *token.FileSet) error {
@@ -51,17 +49,16 @@ func HandleASTReplace(ctx context.Context, req mcp.CallToolRequest, args ASTRepl
 	})
 	if err != nil {
 		if ne, ok := err.(*selector.NavigateError); ok {
-			return navError(ne), nil
+			return navErrResult(ne)
 		}
-		return toolError(err.Error()), nil
+		return errResult(err.Error())
 	}
 
 	resp := map[string]interface{}{
 		"changed": result.Changed,
 		"diff":    result.Diff,
 	}
-	b, _ := json.Marshal(resp)
-	return mcp.NewToolResultText(string(b)), nil
+	return okResult(resp)
 }
 
 func replaceInParent(ctx selector.ParentContext, newNode ast.Node) error {

@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lthiery/goast/diff"
+	"github.com/mattdurham/grv/diff"
 )
 
 // Result is returned by Edit and DryRun.

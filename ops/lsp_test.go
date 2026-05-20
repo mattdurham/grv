@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
+	"github.com/mattdurham/grv/ops"
 )
 
 const fixtureA = `package p
@@ -60,7 +60,7 @@ func mustWriteFile(t *testing.T, path string, content []byte) {
 func TestHandleASTNodeAt_FuncDecl(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{
 		File: path,
 		Line: 3,
 		Col:  6,
@@ -68,7 +68,7 @@ func TestHandleASTNodeAt_FuncDecl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -87,7 +87,9 @@ func TestHandleASTNodeAt_FuncDecl(t *testing.T) {
 
 	// The innermost node at col 6 of "func Add..." is the Ident "Add", which is
 	// inside the FuncDecl — the path should contain FuncDecl regardless.
-	var peek struct{ Kind string `json:"kind"` }
+	var peek struct {
+		Kind string `json:"kind"`
+	}
 	if err := json.Unmarshal(resp.Node, &peek); err != nil {
 		t.Fatalf("unmarshal node: %v", err)
 	}
@@ -99,7 +101,7 @@ func TestHandleASTNodeAt_FuncDecl(t *testing.T) {
 func TestHandleASTNodeAt_IfStmt(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{
 		File: path,
 		Line: 4,
 		Col:  2,
@@ -107,7 +109,7 @@ func TestHandleASTNodeAt_IfStmt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -128,7 +130,7 @@ func TestHandleASTNodeAt_IfStmt(t *testing.T) {
 func TestHandleASTNodeAt_ReturnsMeta(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{
 		File: path,
 		Line: 3,
 		Col:  1,
@@ -136,7 +138,7 @@ func TestHandleASTNodeAt_ReturnsMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -152,15 +154,12 @@ func TestHandleASTNodeAt_ReturnsMeta(t *testing.T) {
 func TestHandleASTNodeAt_OutOfRange(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+	_, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{
 		File: path,
 		Line: 9999,
 		Col:  1,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for out-of-range line")
 	}
 }
@@ -168,15 +167,12 @@ func TestHandleASTNodeAt_OutOfRange(t *testing.T) {
 func TestHandleASTNodeAt_ColZero(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+	_, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{
 		File: path,
 		Line: 1,
 		Col:  0,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for col=0")
 	}
 }
@@ -187,14 +183,14 @@ func TestHandleASTFindSymbols_ExactName(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "a.go"), []byte(fixtureA))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "Add",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -212,14 +208,14 @@ func TestHandleASTFindSymbols_GlobAll(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "a.go"), []byte(fixtureA))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "*",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -242,14 +238,14 @@ func TestHandleASTFindSymbols_GlobPrefix(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "a.go"), []byte(fixtureA))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "A*",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -273,7 +269,7 @@ func TestHandleASTFindSymbols_KindFilter(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "a.go"), []byte(combined))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "*",
 		Kinds: []string{"TypeSpec"},
@@ -281,7 +277,7 @@ func TestHandleASTFindSymbols_KindFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -306,14 +302,14 @@ func TestHandleASTFindSymbols_CaseInsensitive(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "b.go"), []byte(fixtureB))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "dog",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -335,14 +331,14 @@ func TestHandleASTFindSymbols_RecvField(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "b.go"), []byte(fixtureB))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "Greet",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -360,14 +356,14 @@ func TestHandleASTFindSymbols_NoMatch(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "a.go"), []byte(fixtureA))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "ZZZNonExistent",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -383,14 +379,14 @@ func TestHandleASTFindSymbols_MultiFile(t *testing.T) {
 	mustWriteFile(t, filepath.Join(dir, "a.go"), []byte(fixtureA))
 	mustWriteFile(t, filepath.Join(dir, "b.go"), []byte(fixtureB))
 
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "*",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -417,14 +413,14 @@ func TestHandleASTFind_IfStmt(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "IfStmt"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -433,7 +429,9 @@ func TestHandleASTFind_IfStmt(t *testing.T) {
 	if len(results) < 1 {
 		t.Error("expected at least one IfStmt")
 	}
-	var peek struct{ Kind string `json:"kind"` }
+	var peek struct {
+		Kind string `json:"kind"`
+	}
 	if err := json.Unmarshal(results[0].Node, &peek); err != nil {
 		t.Fatalf("unmarshal node: %v", err)
 	}
@@ -449,14 +447,14 @@ func TestHandleASTFind_CallExprPrintln(t *testing.T) {
 		"kind": "CallExpr",
 		"fun":  map[string]string{"kind": "SelectorExpr", "sel": "Println"},
 	})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -471,14 +469,14 @@ func TestHandleASTFind_BinaryExprWithOp(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "BinaryExpr", "op": ">"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -505,14 +503,14 @@ func TestHandleASTFind_Wildcard(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "BinaryExpr"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -527,14 +525,14 @@ func TestHandleASTFind_NoMatch(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "SelectStmt"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -551,14 +549,14 @@ func TestHandleASTFind_ScopeDir(t *testing.T) {
 	mustWriteFile(t, filepath.Join(dir, "b.go"), []byte(fixtureB))
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "IfStmt"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		Dir:     dir,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind dir: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -578,14 +576,14 @@ func TestHandleASTFind_ResultHasPath(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "IfStmt"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
@@ -619,11 +617,11 @@ func F() {
 `
 	path := writeTempFile(t, src)
 	// Line 3 is the for statement
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -642,11 +640,11 @@ func F(items []int) {
 }
 `
 	path := writeTempFile(t, src)
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -666,11 +664,11 @@ func F(x int) {
 }
 `
 	path := writeTempFile(t, src)
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -689,11 +687,11 @@ type Dog struct {
 `
 	path := writeTempFile(t, src)
 	// Line 3 is the Name field
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -718,14 +716,14 @@ func F() {
 		"kind": "CallExpr",
 		"fun":  map[string]interface{}{"kind": "SelectorExpr", "sel": "Println"},
 	})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -753,14 +751,14 @@ func F(a, b int) bool {
 		"kind": "BinaryExpr",
 		"op":   "==",
 	})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -820,13 +818,13 @@ func F(ch chan int) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+			result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{
 				File: tmpPath, Line: tt.line, Col: 2,
 			})
 			if err != nil {
 				t.Fatalf("HandleASTNodeAt %s: %v", tt.name, err)
 			}
-			text := resultText(t, result)
+			text := resultText(t, result, err)
 			var resp ops.ASTNodeAtResponse
 			if err := json.Unmarshal([]byte(text), &resp); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -853,11 +851,11 @@ func F(a, b int) int {
 `
 	path := writeTempFile(t, src)
 	// Line 6 is the second if statement
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 6, Col: 2})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 6, Col: 2})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -881,11 +879,11 @@ func F(x int) {
 `
 	path := writeTempFile(t, src)
 	// Line 5 is inside case 1 body
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 5, Col: 3})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 5, Col: 3})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -909,11 +907,11 @@ func F(ch <-chan int) {
 `
 	path := writeTempFile(t, src)
 	// Line 5 is inside the first case body
-	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 5, Col: 3})
+	result, err := ops.HandleASTNodeAt(ops.ASTNodeAtArgs{File: path, Line: 5, Col: 3})
 	if err != nil {
 		t.Fatalf("HandleASTNodeAt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp ops.ASTNodeAtResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -940,14 +938,14 @@ var debugMode bool
 	}
 
 	// Find all symbols
-	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+	result, err := ops.HandleASTFindSymbols(ops.ASTFindSymbolsArgs{
 		Dir:   dir,
 		Query: "*",
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindSymbols: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var results []ops.SymbolResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -969,14 +967,14 @@ func TestHandleASTFind_ResultHasMeta(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
 	pattern, _ := json.Marshal(map[string]string{"kind": "ReturnStmt"})
-	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+	result, err := ops.HandleASTFind(ops.ASTFindArgs{
 		File:    path,
 		Pattern: pattern,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFind: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var results []ops.FindResult
 	if err := json.Unmarshal([]byte(text), &results); err != nil {

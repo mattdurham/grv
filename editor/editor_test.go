@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lthiery/goast/editor"
+	"github.com/mattdurham/grv/editor"
 )
 
 func copyTestFile(t *testing.T, src string) string {

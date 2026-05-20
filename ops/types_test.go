@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
+	"github.com/mattdurham/grv/ops"
 )
 
 // typesdataDir returns the absolute path to testdata/typesdata.
@@ -24,7 +24,7 @@ func typesdataFile(name string) string {
 
 func TestHandleASTFindRefs_FuncInFile(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTFindRefs(ctx, emptyReq, ops.ASTFindRefsArgs{
+	result, err := ops.HandleASTFindRefs(ops.ASTFindRefsArgs{
 		File:  typesdataFile("defs.go"),
 		Path:  path,
 		Scope: "file",
@@ -32,7 +32,7 @@ func TestHandleASTFindRefs_FuncInFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTFindRefs: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var refs []ops.RefResult
 	if err := json.Unmarshal([]byte(text), &refs); err != nil {
@@ -53,7 +53,7 @@ func TestHandleASTFindRefs_FuncInFile(t *testing.T) {
 func TestHandleASTFindRefs_MethodInFile(t *testing.T) {
 	// Find refs to Dog.Sound within file scope
 	path, _ := json.Marshal([]map[string]interface{}{{"kind": "FuncDecl", "name": "Sound", "recv": "*Dog"}})
-	result, err := ops.HandleASTFindRefs(ctx, emptyReq, ops.ASTFindRefsArgs{
+	result, err := ops.HandleASTFindRefs(ops.ASTFindRefsArgs{
 		File:  typesdataFile("defs.go"),
 		Path:  path,
 		Scope: "file",
@@ -61,7 +61,7 @@ func TestHandleASTFindRefs_MethodInFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTFindRefs: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var refs []ops.RefResult
 	if err := json.Unmarshal([]byte(text), &refs); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -72,27 +72,21 @@ func TestHandleASTFindRefs_MethodInFile(t *testing.T) {
 }
 
 func TestHandleASTFindRefs_MissingPath(t *testing.T) {
-	result, err := ops.HandleASTFindRefs(ctx, emptyReq, ops.ASTFindRefsArgs{
+	_, err := ops.HandleASTFindRefs(ops.ASTFindRefsArgs{
 		File: typesdataFile("defs.go"),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for missing path")
 	}
 }
 
 func TestHandleASTFindRefs_BadFile(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTFindRefs(ctx, emptyReq, ops.ASTFindRefsArgs{
+	_, err := ops.HandleASTFindRefs(ops.ASTFindRefsArgs{
 		File: "/nonexistent/file.go",
 		Path: path,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for bad file")
 	}
 }
@@ -107,7 +101,7 @@ func TestHandleASTFindDef_LocalFunction(t *testing.T) {
 		{"kind": "Body"},
 		{"kind": "ReturnStmt", "index": 0},
 	})
-	result, err := ops.HandleASTFindDef(ctx, emptyReq, ops.ASTFindDefArgs{
+	result, err := ops.HandleASTFindDef(ops.ASTFindDefArgs{
 		File: typesdataFile("defs.go"),
 		Path: path,
 	})
@@ -122,14 +116,14 @@ func TestHandleASTFindDef_LocalFunction(t *testing.T) {
 func TestHandleASTFindDef_FuncDecl(t *testing.T) {
 	// Navigate to Add FuncDecl itself — the definition is Add itself
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTFindDef(ctx, emptyReq, ops.ASTFindDefArgs{
+	result, err := ops.HandleASTFindDef(ops.ASTFindDefArgs{
 		File: typesdataFile("defs.go"),
 		Path: path,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTFindDef: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp ops.ASTFindDefResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -142,26 +136,20 @@ func TestHandleASTFindDef_FuncDecl(t *testing.T) {
 
 func TestHandleASTFindDef_BadFile(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTFindDef(ctx, emptyReq, ops.ASTFindDefArgs{
+	_, err := ops.HandleASTFindDef(ops.ASTFindDefArgs{
 		File: "/nonexistent/file.go",
 		Path: path,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for bad file")
 	}
 }
 
 func TestHandleASTFindDef_MissingPath(t *testing.T) {
-	result, err := ops.HandleASTFindDef(ctx, emptyReq, ops.ASTFindDefArgs{
+	_, err := ops.HandleASTFindDef(ops.ASTFindDefArgs{
 		File: typesdataFile("defs.go"),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for missing path")
 	}
 }
@@ -171,7 +159,7 @@ func TestHandleASTFindDef_MissingPath(t *testing.T) {
 func TestHandleASTFindImpls_AnimalInterface(t *testing.T) {
 	// Find all implementations of Animal in the typesdata package
 	path, _ := json.Marshal([]map[string]string{{"kind": "TypeSpec", "name": "Animal"}})
-	result, err := ops.HandleASTFindImpls(ctx, emptyReq, ops.ASTFindImplsArgs{
+	result, err := ops.HandleASTFindImpls(ops.ASTFindImplsArgs{
 		File:  typesdataFile("defs.go"),
 		Path:  path,
 		Scope: "package",
@@ -179,7 +167,7 @@ func TestHandleASTFindImpls_AnimalInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTFindImpls: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var impls []ops.ImplResult
 	if err := json.Unmarshal([]byte(text), &impls); err != nil {
@@ -203,43 +191,34 @@ func TestHandleASTFindImpls_AnimalInterface(t *testing.T) {
 func TestHandleASTFindImpls_NotInterface(t *testing.T) {
 	// Dog is a struct, not an interface — should return error
 	path, _ := json.Marshal([]map[string]string{{"kind": "TypeSpec", "name": "Dog"}})
-	result, err := ops.HandleASTFindImpls(ctx, emptyReq, ops.ASTFindImplsArgs{
+	_, err := ops.HandleASTFindImpls(ops.ASTFindImplsArgs{
 		File:  typesdataFile("defs.go"),
 		Path:  path,
 		Scope: "package",
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error: Dog is not an interface")
 	}
 }
 
 func TestHandleASTFindImpls_BadFile(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "TypeSpec", "name": "Animal"}})
-	result, err := ops.HandleASTFindImpls(ctx, emptyReq, ops.ASTFindImplsArgs{
+	_, err := ops.HandleASTFindImpls(ops.ASTFindImplsArgs{
 		File:  "/nonexistent/file.go",
 		Path:  path,
 		Scope: "package",
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for bad file")
 	}
 }
 
 func TestHandleASTFindImpls_MissingPath(t *testing.T) {
-	result, err := ops.HandleASTFindImpls(ctx, emptyReq, ops.ASTFindImplsArgs{
+	_, err := ops.HandleASTFindImpls(ops.ASTFindImplsArgs{
 		File:  typesdataFile("defs.go"),
 		Scope: "package",
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for missing path")
 	}
 }

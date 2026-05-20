@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"testing"
 
-	"github.com/lthiery/goast/meta"
+	"github.com/mattdurham/grv/meta"
 )
 
 func TestFileInfo(t *testing.T) {

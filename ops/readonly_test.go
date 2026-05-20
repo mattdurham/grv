@@ -2,39 +2,35 @@
 package ops_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/ops"
 )
 
-var (
-	readonlyCtx     = context.Background()
-	readonlyEmptyReq = mcp.CallToolRequest{}
-)
+func resultJSON(t *testing.T, result json.RawMessage, err error) string {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("tool returned error: %v", err)
+	}
+	return string(result)
+}
 
 func TestIsReadonly_NormalFile(t *testing.T) {
-	// A regular temp file is not readonly
 	f, err := os.CreateTemp(t.TempDir(), "test*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.Close()
-	result, err := ops.HandleFileRead(readonlyCtx, readonlyEmptyReq, ops.FileReadArgs{File: f.Name()})
+	result, err := ops.HandleFileRead(ops.FileReadArgs{File: f.Name()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var resp ops.FileReadResult
-	tc, ok := result.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatal("expected TextContent")
-	}
-	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+	if err := json.Unmarshal(result, &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Readonly {
@@ -43,7 +39,6 @@ func TestIsReadonly_NormalFile(t *testing.T) {
 }
 
 func TestIsReadonly_VendorPath(t *testing.T) {
-	// A path containing /vendor/ should be readonly
 	vendorPath := filepath.Join(t.TempDir(), "vendor", "pkg", "file.go")
 	if err := os.MkdirAll(filepath.Dir(vendorPath), 0755); err != nil {
 		t.Fatal(err)
@@ -52,30 +47,21 @@ func TestIsReadonly_VendorPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// file_write should refuse it
-	result, err := ops.HandleFileWrite(readonlyCtx, readonlyEmptyReq, ops.FileWriteArgs{
+	_, writeErr := ops.HandleFileWrite(ops.FileWriteArgs{
 		File:    vendorPath,
 		Content: "package pkg // modified\n",
 		DryRun:  false,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
-		t.Error("expected tool error for vendor path write, got success")
+	if writeErr == nil {
+		t.Error("expected error for vendor path write, got success")
 	}
 
-	// file_read should succeed but show readonly=true
-	readResult, err := ops.HandleFileRead(readonlyCtx, readonlyEmptyReq, ops.FileReadArgs{File: vendorPath})
+	result, err := ops.HandleFileRead(ops.FileReadArgs{File: vendorPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tc, ok := readResult.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatal("expected TextContent")
-	}
 	var resp ops.FileReadResult
-	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+	if err := json.Unmarshal(result, &resp); err != nil {
 		t.Fatal(err)
 	}
 	if !resp.Readonly {
@@ -88,22 +74,17 @@ func TestIsReadonly_GOROOTFile(t *testing.T) {
 	if goroot == "" {
 		t.Skip("GOROOT not set")
 	}
-	// Pick a known stdlib file
 	stdlibFile := filepath.Join(goroot, "src", "fmt", "print.go")
 	if _, err := os.Stat(stdlibFile); os.IsNotExist(err) {
 		t.Skip("stdlib file not found at", stdlibFile)
 	}
 
-	readResult, err := ops.HandleFileRead(readonlyCtx, readonlyEmptyReq, ops.FileReadArgs{File: stdlibFile})
+	result, err := ops.HandleFileRead(ops.FileReadArgs{File: stdlibFile})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tc, ok := readResult.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatal("expected TextContent")
-	}
 	var resp ops.FileReadResult
-	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+	if err := json.Unmarshal(result, &resp); err != nil {
 		t.Fatal(err)
 	}
 	if !resp.Readonly {
@@ -112,7 +93,6 @@ func TestIsReadonly_GOROOTFile(t *testing.T) {
 }
 
 func TestIsReadonly_WriteToolsEnforced(t *testing.T) {
-	// Verify that ast_insert refuses vendor paths
 	vendorFile := filepath.Join(t.TempDir(), "vendor", "pkg", "code.go")
 	if err := os.MkdirAll(filepath.Dir(vendorFile), 0755); err != nil {
 		t.Fatal(err)
@@ -129,17 +109,14 @@ func TestIsReadonly_WriteToolsEnforced(t *testing.T) {
 	node, _ := json.Marshal(map[string]interface{}{
 		"kind": "ReturnStmt",
 	})
-	result, err := ops.HandleASTInsert(readonlyCtx, readonlyEmptyReq, ops.ASTInsertArgs{
+	_, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:   vendorFile,
 		Path:   path,
 		Index:  0,
 		Node:   node,
 		DryRun: false,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
-		t.Error("expected tool error for ast_insert on vendor file")
+	if err == nil {
+		t.Error("expected error for ast_insert on vendor file")
 	}
 }

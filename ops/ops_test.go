@@ -2,19 +2,14 @@
 package ops_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/lthiery/goast/ops"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mattdurham/grv/ops"
 )
-
-var ctx = context.Background()
-var emptyReq = mcp.CallToolRequest{}
 
 const testdataSimple = "../testdata/simple.go"
 
@@ -33,28 +28,21 @@ func copyToTemp(t *testing.T, src string) string {
 	return dst
 }
 
-// resultText extracts the text content from a CallToolResult.
-func resultText(t *testing.T, result *mcp.CallToolResult) string {
+// resultText returns the JSON string from a tool result.
+func resultText(t *testing.T, result json.RawMessage, err error) string {
 	t.Helper()
-	if result.IsError {
-		t.Fatalf("tool returned error: %v", result.Content)
+	if err != nil {
+		t.Fatalf("tool returned error: %v", err)
 	}
-	if len(result.Content) == 0 {
-		return ""
-	}
-	tc, ok := result.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
-	}
-	return tc.Text
+	return string(result)
 }
 
 func TestHandleASTList(t *testing.T) {
-	result, err := ops.HandleASTList(ctx, emptyReq, ops.ASTListArgs{File: testdataSimple})
+	result, err := ops.HandleASTList(ops.ASTListArgs{File: testdataSimple})
 	if err != nil {
 		t.Fatalf("HandleASTList: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var items []ops.ASTListItem
 	if err := json.Unmarshal([]byte(text), &items); err != nil {
@@ -100,14 +88,14 @@ func TestHandleASTList(t *testing.T) {
 
 func TestHandleASTQuery(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTQuery(ctx, emptyReq, ops.ASTQueryArgs{
+	result, err := ops.HandleASTQuery(ops.ASTQueryArgs{
 		File: testdataSimple,
 		Path: path,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTQuery: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp ops.ASTQueryResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -115,7 +103,9 @@ func TestHandleASTQuery(t *testing.T) {
 	}
 
 	// Verify the node is a FuncDecl
-	var peek struct{ Kind string `json:"kind"` }
+	var peek struct {
+		Kind string `json:"kind"`
+	}
 	if err := json.Unmarshal(resp.Node, &peek); err != nil {
 		t.Fatalf("unmarshal node: %v", err)
 	}
@@ -135,14 +125,14 @@ func TestHandleASTQuery(t *testing.T) {
 }
 
 func TestHandleASTQueryEmptyPath(t *testing.T) {
-	result, err := ops.HandleASTQuery(ctx, emptyReq, ops.ASTQueryArgs{
+	result, err := ops.HandleASTQuery(ops.ASTQueryArgs{
 		File: testdataSimple,
 		Path: json.RawMessage("[]"),
 	})
 	if err != nil {
 		t.Fatalf("HandleASTQuery empty path: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	// Empty path → file-level meta in ASTQueryResponse
 	var resp ops.ASTQueryResponse
@@ -170,7 +160,7 @@ func TestHandleASTInsert(t *testing.T) {
 		},
 	})
 
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:   tmpFile,
 		Path:   path,
 		Index:  0,
@@ -180,7 +170,7 @@ func TestHandleASTInsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTInsert: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -208,7 +198,7 @@ func TestHandleASTInsertDryRunNoWrite(t *testing.T) {
 		"results": []interface{}{map[string]interface{}{"kind": "Ident", "name": "x"}},
 	})
 
-	_, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	_, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:   tmpFile,
 		Path:   path,
 		Index:  0,
@@ -243,7 +233,7 @@ func TestHandleASTReplace(t *testing.T) {
 		},
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -252,7 +242,7 @@ func TestHandleASTReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -277,7 +267,7 @@ func TestHandleASTDelete(t *testing.T) {
 		{"kind": "Stmt", "index": 0},
 	})
 
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File:   tmpFile,
 		Path:   path,
 		DryRun: true,
@@ -285,7 +275,7 @@ func TestHandleASTDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTDelete: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -303,14 +293,14 @@ func TestHandleASTDelete(t *testing.T) {
 func TestHandleAddImport(t *testing.T) {
 	tmpFile := copyToTemp(t, testdataSimple)
 
-	result, err := ops.HandleAddImport(ctx, emptyReq, ops.AddImportArgs{
+	result, err := ops.HandleAddImport(ops.AddImportArgs{
 		File: tmpFile,
 		Path: "strings",
 	})
 	if err != nil {
 		t.Fatalf("HandleAddImport: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -335,14 +325,14 @@ func TestHandleAddImportAlreadyPresent(t *testing.T) {
 	tmpFile := copyToTemp(t, testdataSimple)
 
 	// fmt is already imported in simple.go
-	result, err := ops.HandleAddImport(ctx, emptyReq, ops.AddImportArgs{
+	result, err := ops.HandleAddImport(ops.AddImportArgs{
 		File: tmpFile,
 		Path: "fmt",
 	})
 	if err != nil {
 		t.Fatalf("HandleAddImport: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -357,14 +347,14 @@ func TestHandleAddImportAlreadyPresent(t *testing.T) {
 func TestHandleDeleteImport(t *testing.T) {
 	tmpFile := copyToTemp(t, testdataSimple)
 
-	result, err := ops.HandleDeleteImport(ctx, emptyReq, ops.DeleteImportArgs{
+	result, err := ops.HandleDeleteImport(ops.DeleteImportArgs{
 		File: tmpFile,
 		Path: "fmt",
 	})
 	if err != nil {
 		t.Fatalf("HandleDeleteImport: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -377,11 +367,11 @@ func TestHandleDeleteImport(t *testing.T) {
 }
 
 func TestHandleListImports(t *testing.T) {
-	result, err := ops.HandleListImports(ctx, emptyReq, ops.ListImportsArgs{File: testdataSimple})
+	result, err := ops.HandleListImports(ops.ListImportsArgs{File: testdataSimple})
 	if err != nil {
 		t.Fatalf("HandleListImports: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var imports []ops.ImportInfo
 	if err := json.Unmarshal([]byte(text), &imports); err != nil {
@@ -411,11 +401,11 @@ func TestHandleListImports(t *testing.T) {
 var testGoMod = filepath.Join("..", "testdata", "test.mod")
 
 func TestHandleGoModRead(t *testing.T) {
-	result, err := ops.HandleGoModRead(ctx, emptyReq, ops.GoModReadArgs{File: testGoMod})
+	result, err := ops.HandleGoModRead(ops.GoModReadArgs{File: testGoMod})
 	if err != nil {
 		t.Fatalf("HandleGoModRead: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var summary struct {
 		Module  string `json:"module"`
@@ -447,7 +437,7 @@ func TestHandleGoModRead(t *testing.T) {
 func TestHandleGoModRequire(t *testing.T) {
 	tmpMod := copyToTemp(t, testGoMod)
 
-	result, err := ops.HandleGoModRequire(ctx, emptyReq, ops.GoModRequireArgs{
+	result, err := ops.HandleGoModRequire(ops.GoModRequireArgs{
 		File:    tmpMod,
 		Path:    "golang.org/x/sync",
 		Version: "v0.1.0",
@@ -455,7 +445,7 @@ func TestHandleGoModRequire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleGoModRequire: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -466,11 +456,11 @@ func TestHandleGoModRequire(t *testing.T) {
 	}
 
 	// Verify the require appears in a subsequent read
-	readResult, err := ops.HandleGoModRead(ctx, emptyReq, ops.GoModReadArgs{File: tmpMod})
+	readResult, err := ops.HandleGoModRead(ops.GoModReadArgs{File: tmpMod})
 	if err != nil {
 		t.Fatalf("HandleGoModRead after require: %v", err)
 	}
-	readText := resultText(t, readResult)
+	readText := resultText(t, readResult, err)
 	if !strings.Contains(readText, "golang.org/x/sync") {
 		t.Errorf("expected golang.org/x/sync in mod after require, got: %s", readText)
 	}
@@ -479,7 +469,7 @@ func TestHandleGoModRequire(t *testing.T) {
 func TestHandleGoModRequire_Indirect(t *testing.T) {
 	tmpMod := copyToTemp(t, testGoMod)
 
-	result, err := ops.HandleGoModRequire(ctx, emptyReq, ops.GoModRequireArgs{
+	result, err := ops.HandleGoModRequire(ops.GoModRequireArgs{
 		File:     tmpMod,
 		Path:     "golang.org/x/net",
 		Version:  "v0.1.0",
@@ -488,7 +478,7 @@ func TestHandleGoModRequire_Indirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleGoModRequire: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -502,7 +492,7 @@ func TestHandleGoModDropRequire(t *testing.T) {
 	tmpMod := copyToTemp(t, testGoMod)
 
 	// First add a require, then drop it
-	_, err := ops.HandleGoModRequire(ctx, emptyReq, ops.GoModRequireArgs{
+	_, err := ops.HandleGoModRequire(ops.GoModRequireArgs{
 		File:    tmpMod,
 		Path:    "golang.org/x/sync",
 		Version: "v0.1.0",
@@ -511,14 +501,14 @@ func TestHandleGoModDropRequire(t *testing.T) {
 		t.Fatalf("HandleGoModRequire: %v", err)
 	}
 
-	dropResult, err := ops.HandleGoModDropRequire(ctx, emptyReq, ops.GoModDropRequireArgs{
+	dropResult, err := ops.HandleGoModDropRequire(ops.GoModDropRequireArgs{
 		File: tmpMod,
 		Path: "golang.org/x/sync",
 	})
 	if err != nil {
 		t.Fatalf("HandleGoModDropRequire: %v", err)
 	}
-	text := resultText(t, dropResult)
+	text := resultText(t, dropResult, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -528,11 +518,11 @@ func TestHandleGoModDropRequire(t *testing.T) {
 	}
 
 	// Verify gone
-	readResult, err := ops.HandleGoModRead(ctx, emptyReq, ops.GoModReadArgs{File: tmpMod})
+	readResult, err := ops.HandleGoModRead(ops.GoModReadArgs{File: tmpMod})
 	if err != nil {
 		t.Fatalf("HandleGoModRead: %v", err)
 	}
-	readText := resultText(t, readResult)
+	readText := resultText(t, readResult, err)
 	if strings.Contains(readText, "golang.org/x/sync") {
 		t.Error("expected golang.org/x/sync to be absent after drop")
 	}
@@ -541,7 +531,7 @@ func TestHandleGoModDropRequire(t *testing.T) {
 func TestHandleGoModReplace(t *testing.T) {
 	tmpMod := copyToTemp(t, testGoMod)
 
-	result, err := ops.HandleGoModReplace(ctx, emptyReq, ops.GoModReplaceArgs{
+	result, err := ops.HandleGoModReplace(ops.GoModReplaceArgs{
 		File:       tmpMod,
 		Old:        "golang.org/x/text",
 		New:        "golang.org/x/text",
@@ -550,7 +540,7 @@ func TestHandleGoModReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleGoModReplace: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -560,11 +550,11 @@ func TestHandleGoModReplace(t *testing.T) {
 	}
 
 	// Verify replace appears
-	readResult, err := ops.HandleGoModRead(ctx, emptyReq, ops.GoModReadArgs{File: tmpMod})
+	readResult, err := ops.HandleGoModRead(ops.GoModReadArgs{File: tmpMod})
 	if err != nil {
 		t.Fatalf("HandleGoModRead: %v", err)
 	}
-	readText := resultText(t, readResult)
+	readText := resultText(t, readResult, err)
 	if !strings.Contains(readText, "v0.5.0") {
 		t.Errorf("expected v0.5.0 in mod after replace, got: %s", readText)
 	}
@@ -574,7 +564,7 @@ func TestHandleGoModDropReplace(t *testing.T) {
 	tmpMod := copyToTemp(t, testGoMod)
 
 	// Add a replace, then drop it
-	_, err := ops.HandleGoModReplace(ctx, emptyReq, ops.GoModReplaceArgs{
+	_, err := ops.HandleGoModReplace(ops.GoModReplaceArgs{
 		File:       tmpMod,
 		Old:        "golang.org/x/text",
 		New:        "golang.org/x/text",
@@ -584,14 +574,14 @@ func TestHandleGoModDropReplace(t *testing.T) {
 		t.Fatalf("HandleGoModReplace: %v", err)
 	}
 
-	dropResult, err := ops.HandleGoModDropReplace(ctx, emptyReq, ops.GoModDropReplaceArgs{
+	dropResult, err := ops.HandleGoModDropReplace(ops.GoModDropReplaceArgs{
 		File: tmpMod,
 		Old:  "golang.org/x/text",
 	})
 	if err != nil {
 		t.Fatalf("HandleGoModDropReplace: %v", err)
 	}
-	text := resultText(t, dropResult)
+	text := resultText(t, dropResult, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -602,12 +592,9 @@ func TestHandleGoModDropReplace(t *testing.T) {
 }
 
 func TestHandleGoModRead_InvalidFile(t *testing.T) {
-	result, err := ops.HandleGoModRead(ctx, emptyReq, ops.GoModReadArgs{File: "/nonexistent/go.mod"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.IsError {
-		t.Error("expected tool error for nonexistent file")
+	_, err := ops.HandleGoModRead(ops.GoModReadArgs{File: "/nonexistent/go.mod"})
+	if err == nil {
+		t.Error("expected error for nonexistent file")
 	}
 }
 
@@ -630,7 +617,7 @@ func TestHandleASTReplace_IfCond(t *testing.T) {
 		"name": "true",
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -639,7 +626,7 @@ func TestHandleASTReplace_IfCond(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -666,7 +653,7 @@ func TestHandleASTReplace_ReturnValue(t *testing.T) {
 		},
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -675,7 +662,7 @@ func TestHandleASTReplace_ReturnValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -701,7 +688,7 @@ func TestHandleASTReplace_ForStmt_Cond(t *testing.T) {
 		"name": "true",
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -710,7 +697,7 @@ func TestHandleASTReplace_ForStmt_Cond(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace ForStmt.Cond: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -735,7 +722,7 @@ func TestHandleASTReplace_RangeStmt_X(t *testing.T) {
 		"name": "items",
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -744,7 +731,7 @@ func TestHandleASTReplace_RangeStmt_X(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace RangeStmt.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -771,7 +758,7 @@ func TestHandleASTInsert_IntoFieldList(t *testing.T) {
 		"type":  map[string]interface{}{"kind": "Ident", "name": "int"},
 	})
 
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:   tmpFile,
 		Path:   path,
 		Index:  -1, // append
@@ -781,7 +768,7 @@ func TestHandleASTInsert_IntoFieldList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTInsert into FieldList: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -812,7 +799,7 @@ func TestHandleASTInsert_IntoFileDecls(t *testing.T) {
 		},
 	})
 
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:   tmpFile,
 		Path:   path,
 		Index:  -1,
@@ -822,7 +809,7 @@ func TestHandleASTInsert_IntoFileDecls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTInsert into File.Decls: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -851,7 +838,7 @@ func TestHandleASTInsert_IntoFieldListViaParent(t *testing.T) {
 		"type":  map[string]interface{}{"kind": "Ident", "name": "string"},
 	})
 
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:   tmpFile,
 		Path:   path,
 		Index:  0, // insert at position 0 in the parent list
@@ -861,7 +848,7 @@ func TestHandleASTInsert_IntoFieldListViaParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTInsert via FieldList parent: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -881,14 +868,14 @@ func TestHandleASTQueryMany(t *testing.T) {
 	path1, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
 	path2, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Fibonacci"}})
 
-	result, err := ops.HandleASTQueryMany(ctx, emptyReq, ops.ASTQueryManyArgs{
+	result, err := ops.HandleASTQueryMany(ops.ASTQueryManyArgs{
 		File:  testdataSimple,
 		Paths: []json.RawMessage{path1, path2},
 	})
 	if err != nil {
 		t.Fatalf("HandleASTQueryMany: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var responses []ops.ASTQueryResponse
 	if err := json.Unmarshal([]byte(text), &responses); err != nil {
@@ -900,7 +887,9 @@ func TestHandleASTQueryMany(t *testing.T) {
 
 	// Each should be a FuncDecl
 	for i, resp := range responses {
-		var peek struct{ Kind string `json:"kind"` }
+		var peek struct {
+			Kind string `json:"kind"`
+		}
 		if err := json.Unmarshal(resp.Node, &peek); err != nil {
 			t.Fatalf("unmarshal node[%d]: %v", i, err)
 		}
@@ -914,14 +903,11 @@ func TestHandleASTQueryMany_Error(t *testing.T) {
 	// Query with a path that doesn't exist
 	badPath, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "NonExistent"}})
 
-	result, err := ops.HandleASTQueryMany(ctx, emptyReq, ops.ASTQueryManyArgs{
+	_, err := ops.HandleASTQueryMany(ops.ASTQueryManyArgs{
 		File:  testdataSimple,
 		Paths: []json.RawMessage{badPath},
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for non-existent path")
 	}
 }
@@ -930,14 +916,14 @@ func TestHandleASTQueryMany_Error(t *testing.T) {
 
 func TestHandleASTMeta(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "Add"}})
-	result, err := ops.HandleASTMeta(ctx, emptyReq, ops.ASTMetaArgs{
+	result, err := ops.HandleASTMeta(ops.ASTMetaArgs{
 		File: testdataSimple,
 		Path: path,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTMeta: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &m); err != nil {
@@ -949,14 +935,14 @@ func TestHandleASTMeta(t *testing.T) {
 }
 
 func TestHandleASTMeta_FileLevelEmpty(t *testing.T) {
-	result, err := ops.HandleASTMeta(ctx, emptyReq, ops.ASTMetaArgs{
+	result, err := ops.HandleASTMeta(ops.ASTMetaArgs{
 		File: testdataSimple,
 		Path: json.RawMessage("[]"),
 	})
 	if err != nil {
 		t.Fatalf("HandleASTMeta: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -968,14 +954,11 @@ func TestHandleASTMeta_FileLevelEmpty(t *testing.T) {
 
 func TestHandleASTMeta_Error(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "NonExistent"}})
-	result, err := ops.HandleASTMeta(ctx, emptyReq, ops.ASTMetaArgs{
+	_, err := ops.HandleASTMeta(ops.ASTMetaArgs{
 		File: testdataSimple,
 		Path: path,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for non-existent path")
 	}
 }
@@ -1000,7 +983,7 @@ func TestHandleASTReplace_AssignStmt_Rhs(t *testing.T) {
 		"value": "99",
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -1009,7 +992,7 @@ func TestHandleASTReplace_AssignStmt_Rhs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace AssignStmt.Rhs: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1042,7 +1025,7 @@ func TestHandleASTReplace_SelectorExpr_X(t *testing.T) {
 		},
 	})
 
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newNode,
@@ -1051,7 +1034,7 @@ func TestHandleASTReplace_SelectorExpr_X(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace ReturnStmt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1071,7 +1054,7 @@ func TestHandleASTDelete_FieldFromStruct(t *testing.T) {
 		{"kind": "Field", "name": "Name"},
 	})
 
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File:   tmpFile,
 		Path:   path,
 		DryRun: true,
@@ -1079,7 +1062,7 @@ func TestHandleASTDelete_FieldFromStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTDelete field: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1101,7 +1084,7 @@ func TestHandleASTDelete_DeclFromFile(t *testing.T) {
 		{"kind": "FuncDecl", "name": "Add"},
 	})
 
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File:   tmpFile,
 		Path:   path,
 		DryRun: true,
@@ -1109,7 +1092,7 @@ func TestHandleASTDelete_DeclFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTDelete decl: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1132,13 +1115,13 @@ func TestHandleASTReplace_BinaryExpr_X(t *testing.T) {
 		{"kind": "X"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "m"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace BinaryExpr.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1157,13 +1140,13 @@ func TestHandleASTReplace_BinaryExpr_Y(t *testing.T) {
 		{"kind": "Y"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace BinaryExpr.Y: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1183,13 +1166,13 @@ func TestHandleASTReplace_AssignStmt_Lhs(t *testing.T) {
 		{"kind": "Lhs", "index": 0},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "c"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace AssignStmt.Lhs: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1244,13 +1227,13 @@ func F(x int) {
 		{"kind": "Tag"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "y"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace SwitchStmt.Tag: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1268,13 +1251,13 @@ func TestHandleASTReplace_RangeStmt_Key(t *testing.T) {
 		{"kind": "Key"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "idx"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace RangeStmt.Key: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1292,13 +1275,13 @@ func TestHandleASTReplace_RangeStmt_Value(t *testing.T) {
 		{"kind": "Value"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "elem"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace RangeStmt.Value: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1321,13 +1304,13 @@ func TestHandleASTReplace_ForStmt_Init(t *testing.T) {
 		"tok":  ":=",
 		"rhs":  []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "2"}},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace ForStmt.Init: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1349,13 +1332,13 @@ func TestHandleASTReplace_ForStmt_Post(t *testing.T) {
 		"x":    map[string]interface{}{"kind": "Ident", "name": "i"},
 		"tok":  "++",
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace ForStmt.Post: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	_ = resp // May or may not change depending on formatting
@@ -1387,13 +1370,13 @@ func F(x int) int {
 	newNode, _ := json.Marshal(map[string]interface{}{
 		"kind": "BlockStmt",
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace IfStmt.Else: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	_ = resp
@@ -1427,13 +1410,13 @@ func F() int {
 		"tok":  ":=",
 		"rhs":  []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "2"}},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace IfStmt.Init: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1453,13 +1436,13 @@ func TestHandleASTReplace_IfStmt_Body(t *testing.T) {
 	newNode, _ := json.Marshal(map[string]interface{}{
 		"kind": "BlockStmt",
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace IfStmt.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1477,13 +1460,13 @@ func TestHandleASTReplace_FuncDecl_Body(t *testing.T) {
 	newNode, _ := json.Marshal(map[string]interface{}{
 		"kind": "BlockStmt",
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace FuncDecl.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1505,13 +1488,13 @@ func TestHandleASTReplace_GenDecl_Spec(t *testing.T) {
 			"kind": "StructType",
 		},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace GenDecl.Spec: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1536,13 +1519,13 @@ func TestHandleASTReplace_FieldList_Field(t *testing.T) {
 		"names": []string{"Nickname"},
 		"type":  map[string]interface{}{"kind": "Ident", "name": "string"},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace Field: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1565,13 +1548,13 @@ func TestHandleASTReplace_File_Decl(t *testing.T) {
 		},
 		"body": map[string]interface{}{"kind": "BlockStmt"},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace File.Decl: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1605,13 +1588,13 @@ func F() {
 		{"kind": "X"},
 		{"kind": "Args", "index": 1},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile, Path: path, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTDelete CallExpr.Args: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1653,13 +1636,13 @@ func F() {
 		{"kind": "Rhs", "index": 0},
 		{"kind": "Elts", "index": 2},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile2, Path: path, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTDelete CompositeLit.Elts: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1683,13 +1666,13 @@ func TestHandleASTInsert_IntoBlockStmt_ViaParent(t *testing.T) {
 		"kind":    "ReturnStmt",
 		"results": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: retNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert via BlockStmt parent: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1721,13 +1704,13 @@ func F() {
 		{"kind": "X"},
 	})
 	newArg, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "STRING", "value": `"world"`})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: -1, Node: newArg, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert into CallExpr.Args: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1758,13 +1741,13 @@ func F() {
 		{"kind": "Rhs", "index": 0},
 	})
 	newElt, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "3"})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: -1, Node: newElt, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert into CompositeLit: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1827,13 +1810,13 @@ func F() {
 		{"kind": "Sel"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "Printf"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace SelectorExpr.Sel: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1865,13 +1848,13 @@ func F() {
 		{"kind": "X"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "log"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace SelectorExpr.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1910,13 +1893,13 @@ func F() {
 		"fun":  map[string]interface{}{"kind": "Ident", "name": "panic"},
 		"args": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "STRING", "value": `"err"`}},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace ExprStmt.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1947,13 +1930,13 @@ func F() {
 		{"kind": "Args", "index": 0},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "STRING", "value": `"goodbye"`})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace CallExpr.Args: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -1983,13 +1966,13 @@ func F() {
 		{"kind": "Elts", "index": 0},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "99"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace CompositeLit.Elts: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2031,13 +2014,13 @@ type Foo struct{ X int }
 		"kind":   "StructType",
 		"fields": []interface{}{},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile2, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace TypeSpec.Type: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	_ = resp // May or may not change (empty struct)
@@ -2053,13 +2036,13 @@ func TestHandleASTReplace_RangeStmt_Body(t *testing.T) {
 		{"kind": "Body"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BlockStmt"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace RangeStmt.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2088,13 +2071,13 @@ func F(x int) {
 		{"kind": "Body"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BlockStmt"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace SwitchStmt.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2112,13 +2095,13 @@ func TestHandleASTReplace_ForStmt_Body(t *testing.T) {
 		{"kind": "Body"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BlockStmt"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace ForStmt.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2165,13 +2148,13 @@ func F(x int) int {
 		{"kind": "Stmt", "index": 0},
 	})
 	_ = path
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile, Path: steps, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTDelete CaseClause.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2202,13 +2185,13 @@ func F(ch chan int) {
 		{"kind": "CommClause", "index": 0},
 		{"kind": "Stmt", "index": 0},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile, Path: path, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTDelete CommClause.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2247,13 +2230,13 @@ type (
 	path, _ := json.Marshal([]map[string]interface{}{
 		{"kind": "TypeSpec", "name": "Foo"},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile2, Path: path, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTDelete GenDecl.Spec: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2280,13 +2263,13 @@ func TestHandleASTInsert_IntoFileDecls_ViaParent(t *testing.T) {
 		},
 		"body": map[string]interface{}{"kind": "BlockStmt"},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: newFunc, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert via File parent: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2318,13 +2301,13 @@ func F() {
 		{"kind": "Args", "index": 0},
 	})
 	newArg, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "STRING", "value": `"inserted"`})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: newArg, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert via CallExpr parent: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2354,13 +2337,13 @@ func F() {
 		{"kind": "Elts", "index": 0},
 	})
 	newElt, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "99"})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: newElt, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert via CompositeLit parent: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2402,13 +2385,13 @@ func F(x int) {
 		{"kind": "X"}, // UnaryExpr.X
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "z"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile2, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace UnaryExpr.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2439,13 +2422,13 @@ func F() {
 		{"kind": "X"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "j"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace IncDecStmt.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2475,13 +2458,13 @@ func F() {
 		{"kind": "Key"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "STRING", "value": `"world"`})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace KeyValueExpr.Key: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2511,13 +2494,13 @@ func F() {
 		{"kind": "Value"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "42"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace KeyValueExpr.Value: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2545,13 +2528,13 @@ func F(p *int) {
 		{"kind": "X"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "q"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace StarExpr.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2578,13 +2561,13 @@ func F(ch chan int) {
 		{"kind": "Value"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "42"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace SendStmt.Value: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2613,13 +2596,13 @@ func F(x int) int {
 		{"kind": "X"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "x"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace ParenExpr.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2659,13 +2642,13 @@ func F(s []int) {
 		{"kind": "X"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "arr"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile2, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace IndexExpr.X: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2705,14 +2688,11 @@ func F(x int) int {
 		"results": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "99"}},
 	})
 	// This may result in a tool error (type mismatch) but covers the code path
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("HandleASTReplace CaseClause arm: unexpected Go error: %v", err)
-	}
 	// Either changed or error — we just care that the arm was reached
-	_ = result
+	_, _ = result, err
 }
 
 func TestHandleASTReplace_CommClause_Body(t *testing.T) {
@@ -2745,13 +2725,13 @@ func F(ch chan int) {
 		"tok":  "=",
 		"rhs":  []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace CommClause.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2793,13 +2773,10 @@ func F(x int) int {
 		"results": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
 	// May result in tool error (type mismatch); we just need to reach the arm
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: newStmt, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("HandleASTInsert CaseClause arm: unexpected Go error: %v", err)
-	}
-	_ = result
+	_, _ = result, err
 }
 
 func TestHandleASTInsert_IntoCommClauseBody(t *testing.T) {
@@ -2834,13 +2811,13 @@ func F(ch chan int) {
 			"args": []interface{}{},
 		},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: newStmt, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert CommClause.Body: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -2861,11 +2838,11 @@ func (f Foo) Bar() {}
 	tmpFile := dir + "/val.go"
 	os.WriteFile(tmpFile, src, 0644)
 
-	result, err := ops.HandleASTList(ctx, emptyReq, ops.ASTListArgs{File: tmpFile})
+	result, err := ops.HandleASTList(ops.ASTListArgs{File: tmpFile})
 	if err != nil {
 		t.Fatalf("HandleASTList: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var items []ops.ASTListItem
 	json.Unmarshal([]byte(text), &items)
 	found := false
@@ -2882,28 +2859,22 @@ func (f Foo) Bar() {}
 // ---- error paths ----
 
 func TestHandleASTQuery_ParseError(t *testing.T) {
-	result, err := ops.HandleASTQuery(ctx, emptyReq, ops.ASTQueryArgs{
+	_, err := ops.HandleASTQuery(ops.ASTQueryArgs{
 		File: "/nonexistent/file.go",
 		Path: json.RawMessage("[]"),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
 
 func TestHandleASTQuery_NavError(t *testing.T) {
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "NonExistent"}})
-	result, err := ops.HandleASTQuery(ctx, emptyReq, ops.ASTQueryArgs{
+	_, err := ops.HandleASTQuery(ops.ASTQueryArgs{
 		File: testdataSimple,
 		Path: path,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for non-existent path")
 	}
 }
@@ -2915,16 +2886,13 @@ func TestHandleASTInsert_NavigateError(t *testing.T) {
 		"kind":    "ReturnStmt",
 		"results": []interface{}{},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	_, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:  tmpFile,
 		Path:  path,
 		Index: 0,
 		Node:  retNode,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for navigate error")
 	}
 }
@@ -2933,15 +2901,12 @@ func TestHandleASTReplace_NavigateError(t *testing.T) {
 	tmpFile := copyToTemp(t, testdataSimple)
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "NonExistent"}})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "x"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile,
 		Path: path,
 		Node: newNode,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for navigate error")
 	}
 }
@@ -2949,14 +2914,11 @@ func TestHandleASTReplace_NavigateError(t *testing.T) {
 func TestHandleASTDelete_NavigateError(t *testing.T) {
 	tmpFile := copyToTemp(t, testdataSimple)
 	path, _ := json.Marshal([]map[string]string{{"kind": "FuncDecl", "name": "NonExistent"}})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	_, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile,
 		Path: path,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for navigate error")
 	}
 }
@@ -2964,56 +2926,44 @@ func TestHandleASTDelete_NavigateError(t *testing.T) {
 // ---- gomod error paths to improve branch coverage ----
 
 func TestHandleGoModRequire_InvalidFile(t *testing.T) {
-	result, err := ops.HandleGoModRequire(ctx, emptyReq, ops.GoModRequireArgs{
+	_, err := ops.HandleGoModRequire(ops.GoModRequireArgs{
 		File:    "/nonexistent/go.mod",
 		Path:    "golang.org/x/sync",
 		Version: "v0.1.0",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
 
 func TestHandleGoModDropRequire_InvalidFile(t *testing.T) {
-	result, err := ops.HandleGoModDropRequire(ctx, emptyReq, ops.GoModDropRequireArgs{
+	_, err := ops.HandleGoModDropRequire(ops.GoModDropRequireArgs{
 		File: "/nonexistent/go.mod",
 		Path: "golang.org/x/text",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
 
 func TestHandleGoModReplace_InvalidFile(t *testing.T) {
-	result, err := ops.HandleGoModReplace(ctx, emptyReq, ops.GoModReplaceArgs{
+	_, err := ops.HandleGoModReplace(ops.GoModReplaceArgs{
 		File:       "/nonexistent/go.mod",
 		Old:        "golang.org/x/text",
 		New:        "golang.org/x/text",
 		NewVersion: "v0.5.0",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
 
 func TestHandleGoModDropReplace_InvalidFile(t *testing.T) {
-	result, err := ops.HandleGoModDropReplace(ctx, emptyReq, ops.GoModDropReplaceArgs{
+	_, err := ops.HandleGoModDropReplace(ops.GoModDropReplaceArgs{
 		File: "/nonexistent/go.mod",
 		Old:  "golang.org/x/text",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
@@ -3021,7 +2971,7 @@ func TestHandleGoModDropReplace_InvalidFile(t *testing.T) {
 func TestHandleGoModRequire_NoChange(t *testing.T) {
 	// Adding an already-present require doesn't change the file
 	tmpMod := copyToTemp(t, testGoMod)
-	result, err := ops.HandleGoModRequire(ctx, emptyReq, ops.GoModRequireArgs{
+	result, err := ops.HandleGoModRequire(ops.GoModRequireArgs{
 		File:    tmpMod,
 		Path:    "golang.org/x/text",
 		Version: "v0.3.0", // same as already present
@@ -3029,7 +2979,7 @@ func TestHandleGoModRequire_NoChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleGoModRequire: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	// changed may be false if already present
@@ -3062,13 +3012,13 @@ func F() { fmt.Println("hi") }
 		{"kind": "Fun"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "println"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace CallExpr.Fun: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3117,13 +3067,13 @@ func F() { x := 1; y := 2; _ = x; _ = y }
 		"tok":  "=",
 		"rhs":  []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 1, Node: newStmt, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert at index 1: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3143,13 +3093,10 @@ func F(x int) { if x > 0 {} }
 		{"kind": "IfStmt", "index": 0},
 		{"kind": "Cond"},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	_, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile, Path: path, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error when deleting scalar field (Index=-1)")
 	}
 }
@@ -3161,11 +3108,11 @@ func TestHandleASTList_VarAndConstDecl(t *testing.T) {
 var x int = 1
 const Pi = 3.14
 `))
-	result, err := ops.HandleASTList(ctx, emptyReq, ops.ASTListArgs{File: tmpFile})
+	result, err := ops.HandleASTList(ops.ASTListArgs{File: tmpFile})
 	if err != nil {
 		t.Fatalf("HandleASTList: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var items []ops.ASTListItem
 	json.Unmarshal([]byte(text), &items)
 	foundVar, foundConst := false, false
@@ -3187,40 +3134,31 @@ const Pi = 3.14
 
 func TestHandleASTQueryMany_ParsePathError(t *testing.T) {
 	// Pass invalid JSON for path to trigger parse error
-	result, err := ops.HandleASTQueryMany(ctx, emptyReq, ops.ASTQueryManyArgs{
+	_, err := ops.HandleASTQueryMany(ops.ASTQueryManyArgs{
 		File:  testdataSimple,
 		Paths: []json.RawMessage{json.RawMessage(`not valid json`)},
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for invalid path JSON")
 	}
 }
 
 func TestHandleASTMeta_ParsePathError(t *testing.T) {
-	result, err := ops.HandleASTMeta(ctx, emptyReq, ops.ASTMetaArgs{
+	_, err := ops.HandleASTMeta(ops.ASTMetaArgs{
 		File: testdataSimple,
 		Path: json.RawMessage(`not valid json`),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for invalid path JSON")
 	}
 }
 
 func TestHandleASTMeta_ParseFileError(t *testing.T) {
-	result, err := ops.HandleASTMeta(ctx, emptyReq, ops.ASTMetaArgs{
+	_, err := ops.HandleASTMeta(ops.ASTMetaArgs{
 		File: "/nonexistent/file.go",
 		Path: json.RawMessage("[]"),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
@@ -3231,16 +3169,13 @@ func TestHandleASTInsert_InvalidNodeJSON(t *testing.T) {
 		{"kind": "FuncDecl", "name": "Add"},
 		{"kind": "Body"},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	_, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:  tmpFile,
 		Path:  path,
 		Index: 0,
 		Node:  json.RawMessage(`{"kind":"UnknownKind"}`),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for unknown kind")
 	}
 }
@@ -3251,15 +3186,12 @@ func TestHandleASTReplace_InvalidNodeJSON(t *testing.T) {
 		{"kind": "FuncDecl", "name": "Add"},
 		{"kind": "Body"},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile,
 		Path: path,
 		Node: json.RawMessage(`{"kind":"UnknownKind"}`),
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for unknown kind")
 	}
 }
@@ -3269,16 +3201,13 @@ func TestHandleASTInsert_ParseFileError(t *testing.T) {
 		{"kind": "FuncDecl", "name": "Add"},
 	})
 	retNode, _ := json.Marshal(map[string]interface{}{"kind": "ReturnStmt", "results": []interface{}{}})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	_, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File:  "/nonexistent/file.go",
 		Path:  path,
 		Index: 0,
 		Node:  retNode,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
@@ -3288,15 +3217,12 @@ func TestHandleASTReplace_ParseFileError(t *testing.T) {
 		{"kind": "FuncDecl", "name": "Add"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "x"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: "/nonexistent/file.go",
 		Path: path,
 		Node: newNode,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
@@ -3305,14 +3231,11 @@ func TestHandleASTDelete_ParseFileError(t *testing.T) {
 	path, _ := json.Marshal([]map[string]interface{}{
 		{"kind": "FuncDecl", "name": "Add"},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	_, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: "/nonexistent/file.go",
 		Path: path,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for nonexistent file")
 	}
 }
@@ -3339,7 +3262,7 @@ func TestHandleASTReplace_CallExpr_Fun(t *testing.T) {
 		{"kind": "Fun"},
 	})
 	newFun, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "println"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File:   tmpFile,
 		Path:   path,
 		Node:   newFun,
@@ -3348,7 +3271,7 @@ func TestHandleASTReplace_CallExpr_Fun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTReplace CallExpr.Fun: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3376,14 +3299,11 @@ func TestHandleASTReplace_CaseClause_Stmt(t *testing.T) {
 		"tok": "=",
 		"rhs": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("HandleASTReplace CaseClause.Stmt: unexpected Go error: %v", err)
-	}
 	// Either changed or tool error (type mismatch); we cover the CaseClause arm either way
-	_ = result
+	_, _ = result, err
 }
 
 func TestHandleASTDelete_CommClause_Stmt(t *testing.T) {
@@ -3399,7 +3319,7 @@ func TestHandleASTDelete_CommClause_Stmt(t *testing.T) {
 		{"kind": "CommClause", "index": 0},
 		{"kind": "Stmt", "index": 0},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File:   tmpFile,
 		Path:   path,
 		DryRun: true,
@@ -3407,7 +3327,7 @@ func TestHandleASTDelete_CommClause_Stmt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleASTDelete CommClause.Stmt: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3435,14 +3355,11 @@ func TestHandleASTInsert_IntoCaseClause_Stmt(t *testing.T) {
 		"tok": "=",
 		"rhs": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: -1, Node: newStmt, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("HandleASTInsert CaseClause.Stmt: unexpected Go error: %v", err)
-	}
 	// May succeed or error depending on type compatibility; covers the arm
-	_ = result
+	_, _ = result, err
 }
 
 func TestHandleGoModRead_WithExclude(t *testing.T) {
@@ -3450,11 +3367,11 @@ func TestHandleGoModRead_WithExclude(t *testing.T) {
 	modContent := "module example.com/test\n\ngo 1.21\n\nrequire golang.org/x/text v0.3.0\n\nexclude golang.org/x/text v0.2.0\n"
 	modPath := dir + "/go.mod"
 	os.WriteFile(modPath, []byte(modContent), 0644)
-	result, err := ops.HandleGoModRead(ctx, emptyReq, ops.GoModReadArgs{File: modPath})
+	result, err := ops.HandleGoModRead(ops.GoModReadArgs{File: modPath})
 	if err != nil {
 		t.Fatalf("HandleGoModRead with exclude: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -3470,11 +3387,11 @@ func TestHandleASTList_VarAndConst(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/vc.go"
 	os.WriteFile(path, []byte(src), 0644)
-	result, err := ops.HandleASTList(ctx, emptyReq, ops.ASTListArgs{File: path})
+	result, err := ops.HandleASTList(ops.ASTListArgs{File: path})
 	if err != nil {
 		t.Fatalf("HandleASTList: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var items []ops.ASTListItem
 	if err := json.Unmarshal([]byte(text), &items); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -3500,13 +3417,13 @@ func TestHandleASTReplace_TypeSpec_WithIdent(t *testing.T) {
 		{"kind": "StructType"},
 	})
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "int"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace TypeSpec.Type→Ident: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3521,13 +3438,13 @@ func TestHandleASTDelete_NonDryRun(t *testing.T) {
 		{"kind": "Body"},
 		{"kind": "Stmt", "index": 0},
 	})
-	result, err := ops.HandleASTDelete(ctx, emptyReq, ops.ASTDeleteArgs{
+	result, err := ops.HandleASTDelete(ops.ASTDeleteArgs{
 		File: tmpFile, Path: path, DryRun: false,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTDelete non-dry-run: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3545,13 +3462,13 @@ func TestHandleASTInsert_NonDryRun(t *testing.T) {
 		"kind":    "ReturnStmt",
 		"results": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "0"}},
 	})
-	result, err := ops.HandleASTInsert(ctx, emptyReq, ops.ASTInsertArgs{
+	result, err := ops.HandleASTInsert(ops.ASTInsertArgs{
 		File: tmpFile, Path: path, Index: 0, Node: retNode, DryRun: false,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTInsert non-dry-run: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3570,13 +3487,13 @@ func TestHandleASTReplace_NonDryRun(t *testing.T) {
 		"kind":    "ReturnStmt",
 		"results": []interface{}{map[string]interface{}{"kind": "BasicLit", "tok": "INT", "value": "42"}},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	result, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: false,
 	})
 	if err != nil {
 		t.Fatalf("HandleASTReplace non-dry-run: %v", err)
 	}
-	text := resultText(t, result)
+	text := resultText(t, result, err)
 	var resp map[string]interface{}
 	json.Unmarshal([]byte(text), &resp)
 	if resp["changed"] != true {
@@ -3596,13 +3513,10 @@ func TestHandleASTReplace_FieldList_TypeMismatch(t *testing.T) {
 	})
 	// Ident is ast.Expr but not *ast.Field
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "x"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for type mismatch (Field replaced by Ident)")
 	}
 }
@@ -3617,13 +3531,10 @@ func TestHandleASTReplace_BlockStmt_TypeMismatch(t *testing.T) {
 	})
 	// Ident is not ast.Stmt
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "x"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for type mismatch (Stmt replaced by Ident)")
 	}
 }
@@ -3642,13 +3553,10 @@ func TestHandleASTReplace_IfStmt_Body_TypeMismatch(t *testing.T) {
 		"kind":    "ReturnStmt",
 		"results": []interface{}{},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for type mismatch (Body replaced by non-BlockStmt)")
 	}
 }
@@ -3661,13 +3569,10 @@ func TestHandleASTReplace_File_TypeMismatch(t *testing.T) {
 	})
 	// Ident is not ast.Decl
 	newNode, _ := json.Marshal(map[string]interface{}{"kind": "Ident", "name": "x"})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for type mismatch (Decl replaced by Ident)")
 	}
 }
@@ -3692,13 +3597,10 @@ func TestHandleASTReplace_BinaryExpr_TypeMismatch(t *testing.T) {
 		"kind":    "ReturnStmt",
 		"results": []interface{}{},
 	})
-	result, err := ops.HandleASTReplace(ctx, emptyReq, ops.ASTReplaceArgs{
+	_, err := ops.HandleASTReplace(ops.ASTReplaceArgs{
 		File: tmpFile, Path: path, Node: newNode, DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected Go error: %v", err)
-	}
-	if !result.IsError {
+	if err == nil {
 		t.Error("expected tool error for type mismatch (Expr replaced by Stmt)")
 	}
 }
