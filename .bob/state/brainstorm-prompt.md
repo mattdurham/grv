@@ -1,31 +1,30 @@
-# Tier 2: goast LSP-style Operations
+# Tier 3: goast — Type-Aware LSP Operations
 
 ## Task
-Add 4 Tier 2 tools to the goast MCP server:
-1. ast_rename — rename identifier at declaration site + all references in same file
-2. ast_node_at — given file + line + col, return innermost node + its structural path
-3. ast_find_symbols — find declarations matching a name glob across a directory
-4. ast_find — structural search: find all nodes matching a partial node tree (absent fields = wildcards)
+Implement 3 tools using go/types for type-system resolution:
+1. ast_find_refs — find all references to an identifier (scope: file or package)
+2. ast_find_def — follow an identifier to its declaration
+3. ast_find_impls — find all types implementing an interface
 
 ## Existing codebase
-- kinds/ — 50 bidirectional JSON ↔ go/ast node types
-- selector/ — Navigate(file, path) → (ast.Node, ParentContext, error)
-- editor/ — parse/edit/format/write cycle
-- meta/ — derived node metadata
-- ops/ — 15 Tier 1 tools (query, insert, replace, delete, imports, gomod)
-- server.go — RegisterTools()
+All Tier 1+2 tools implemented. Relevant:
+- ops/lsp.go — ast_node_at, ast_find_symbols, ast_find (use for pattern reference)
+- ops/rename.go — ast_rename (file-level, no types)
+- ops/query.go — toolError, navError, recvTypeString helpers
+- selector/ — Navigate() for path building
+- kinds/marshal.go — MarshalNode for node → JSON
 
-## Design spec
-See design.md "LSP-style Operations" section for full specs.
+## Key design constraints (from design.md)
+- ast_find_refs: file scope = AST-only walk (fast); package scope = go/packages (slow, accept it)
+- ast_find_def: for identifiers in same file, can use AST scope analysis; for cross-file, go/packages
+- ast_find_impls: always needs go/types (interface satisfaction check)
+- All 3 accept "scope": "file" | "package"
+- "package" scope = use golang.org/x/tools/go/packages.Load with NeedTypesInfo
 
-## Key constraints
-- ast_rename: AST-only (no go/types). Walk file with astutil.Apply, rename all *ast.Ident with matching name. Document approximation (may rename unrelated idents of same name in different scopes).
-- ast_node_at: Parse file, compute byte offset from line+col (using token.FileSet), walk AST to find innermost node at that position, reverse-build path from file root to that node.
-- ast_find_symbols: Walk .go files in a dir, parse each, scan top-level decls, match name against glob pattern. Return {file, path, kind, name, recv, meta} per match.
-- ast_find: Structural search — walk AST with astutil.Apply, MarshalNode each node, compare against pattern using recursive field matching where absent pattern fields are wildcards. Return array of {path, node, meta}.
-
-## All tools: scope parameter
-"file" (default), "dir" (all .go files in dir, non-recursive), "package" (via go list — Tier 3, skip for now)
-
-## Register in server.go
-4 new tools: ast_rename, ast_node_at, ast_find_symbols, ast_find
+## go/packages API constraints
+- Requires the file to be inside a Go module (go.mod must exist in parent)
+- LoadMode: packages.NeedTypesInfo | packages.NeedTypes | packages.NeedSyntax | packages.NeedFiles | packages.NeedImports
+- packages.Load returns []*packages.Package; walk Syntax[i] for AST, TypesInfo for type facts
+- TypesInfo.Uses: map[*ast.Ident]*types.Object — all identifier uses with their object
+- TypesInfo.Defs: map[*ast.Ident]*types.Object — all identifier declarations
+- types.Implements(V, T) — checks if type V implements interface T

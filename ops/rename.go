@@ -25,6 +25,9 @@ type ASTRenameArgs struct {
 
 // HandleASTRename implements the ast_rename tool.
 func HandleASTRename(ctx context.Context, req mcp.CallToolRequest, args ASTRenameArgs) (*mcp.CallToolResult, error) {
+	if isReadonly(args.File) {
+		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+	}
 	if args.To == "" {
 		return toolError("to: new name cannot be empty"), nil
 	}

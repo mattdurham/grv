@@ -214,4 +214,67 @@ func RegisterTools(s *server.MCPServer) {
 		),
 		mcp.NewTypedToolHandler(ops.HandleASTFind),
 	)
+
+	// Tier 3 tools
+
+	// file_read — read raw content of any file
+	s.AddTool(
+		mcp.NewTool("file_read",
+			mcp.WithDescription("Read the raw content of any file. Returns {content, size, readonly}. readonly is true if the file is in vendor/, stdlib, or module cache, or has no write permission."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the file")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleFileRead),
+	)
+
+	// file_write — write raw content to any file atomically
+	s.AddTool(
+		mcp.NewTool("file_write",
+			mcp.WithDescription("Write raw content to any file using an atomic temp+rename. Refuses readonly files. Returns {diff, changed}."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the file")),
+			mcp.WithString("content", mcp.Required(), mcp.Description("New file content")),
+			mcp.WithBoolean("dry_run", mcp.Description("If true, return diff without writing to disk")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleFileWrite),
+	)
+
+	// ast_directory — directory inventory with Go symbol extraction
+	s.AddTool(
+		mcp.NewTool("ast_directory",
+			mcp.WithDescription("Comprehensive directory inventory: Go files with their structs, interfaces, functions, and globals; non-Go files with size; subdirectories. Readonly status on every entry."),
+			mcp.WithString("dir", mcp.Required(), mcp.Description("Absolute path to the directory")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTDirectory),
+	)
+
+	// ast_find_refs — find all references to an identifier
+	s.AddTool(
+		mcp.NewTool("ast_find_refs",
+			mcp.WithDescription("Find all references to the identifier at the given path within a file or package. Uses go/types for accurate resolution. Returns array of {file, path, kind, line}."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the Go source file")),
+			mcp.WithArray("path", mcp.Required(), mcp.Description("Selector path to the declaration")),
+			mcp.WithString("scope", mcp.Description("Search scope: \"file\" (default) or \"package\"")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTFindRefs),
+	)
+
+	// ast_find_def — follow an identifier to its declaration
+	s.AddTool(
+		mcp.NewTool("ast_find_def",
+			mcp.WithDescription("Follow an identifier at the given path to its declaration. Uses go/types for accurate resolution. Returns {file, path, node, meta}. External symbols return {external: true, package, symbol}."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the Go source file")),
+			mcp.WithArray("path", mcp.Required(), mcp.Description("Selector path to the identifier")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTFindDef),
+	)
+
+	// ast_find_impls — find all types implementing an interface
+	s.AddTool(
+		mcp.NewTool("ast_find_impls",
+			mcp.WithDescription("Find all concrete types that implement the interface at the given path. Uses go/types for full type-system resolution. Returns array of {file, path, type_name, meta}."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the Go source file")),
+			mcp.WithArray("path", mcp.Required(), mcp.Description("Selector path to the interface TypeSpec")),
+			mcp.WithString("scope", mcp.Description("Search scope: \"package\" (default) or \"file\"")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTFindImpls),
+	)
 }

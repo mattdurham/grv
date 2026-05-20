@@ -1206,12 +1206,125 @@ All errors return:
 
 ---
 
+## Non-Go File Support
+
+Non-Go files (JSON, YAML, TOML, Markdown, shell scripts, etc.) get simple raw read/write tools — no AST, no JSON node trees.
+
+### `file_read`
+Read the raw content of any file.
+
+```json
+{ "file": "config.yaml" }
+```
+
+Returns: `{ "content": "...", "size": 1234, "readonly": false }`
+
+### `file_write`
+Write raw content to any file. Atomic write (temp + rename). Returns a unified diff.
+
+```json
+{
+  "file": "config.yaml",
+  "content": "...",
+  "dry_run": false
+}
+```
+
+Returns: `{ "diff": "...", "changed": true }`
+
+Both tools set `"readonly": true` if the file is in a readonly location (vendor/, stdlib, module cache) and refuse writes to readonly files.
+
+---
+
+## ast_directory — Directory Overview
+
+A comprehensive directory scanner that provides a complete inventory of what's in a directory: Go symbols, non-Go files, and the readonly status of each.
+
+```json
+{
+  "dir": "./internal/lexer",
+  "recursive": false
+}
+```
+
+Returns a structured inventory:
+
+```json
+{
+  "go_files": [
+    {
+      "file": "lexer.go",
+      "readonly": false,
+      "package": "lexer",
+      "structs": [
+        { "name": "Lexer", "path": [{"kind":"TypeSpec","name":"Lexer"}], "field_count": 4 }
+      ],
+      "interfaces": [
+        { "name": "Scanner", "path": [...], "method_count": 2 }
+      ],
+      "functions": [
+        { "name": "New", "recv": "", "path": [...] },
+        { "name": "Next", "recv": "*Lexer", "path": [...] }
+      ],
+      "globals": [
+        { "kind": "VarDecl", "names": ["defaultBufSize"] },
+        { "kind": "ConstDecl", "names": ["EOF"] }
+      ]
+    }
+  ],
+  "non_go_files": [
+    { "file": "README.md", "size": 1234, "readonly": false },
+    { "file": "config.json", "size": 512, "readonly": false }
+  ],
+  "subdirs": ["internal", "testdata"]
+}
+```
+
+**Readonly detection** — a file/directory is readonly if it is under:
+- `vendor/` (any depth)
+- The Go standard library (`GOROOT`)
+- The Go module cache (`GOPATH/pkg/mod` or `GOMODCACHE`)
+- Has filesystem read-only permission (os.FileMode & 0200 == 0)
+
+Readonly nodes are returned in results but all write tools (`ast_insert`, `ast_replace`, `ast_delete`, `ast_rename`, `file_write`, etc.) return an error if the target file is readonly.
+
+---
+
+## Readonly Metadata Field
+
+All tools that return node or file metadata include `"readonly": bool` in their response. This applies to:
+- `ast_list` — each declaration item
+- `ast_query` / `ast_query_many` — the meta dictionary
+- `ast_find_symbols` — each SymbolResult
+- `ast_directory` — each file entry
+- `file_read` — top-level field
+
+**isReadonly(path string) bool** — shared helper in ops/readonly.go:
+```go
+func isReadonly(filePath string) bool {
+    abs, _ := filepath.Abs(filePath)
+    // vendor
+    if strings.Contains(abs, "/vendor/") { return true }
+    // stdlib
+    if strings.HasPrefix(abs, runtime.GOROOT()) { return true }
+    // module cache
+    gomod := os.Getenv("GOMODCACHE")
+    if gomod == "" { gomod = filepath.Join(os.Getenv("GOPATH"), "pkg", "mod") }
+    if strings.HasPrefix(abs, gomod) { return true }
+    // filesystem readonly
+    info, err := os.Stat(abs)
+    if err == nil && info.Mode()&0200 == 0 { return true }
+    return false
+}
+```
+
+---
+
 ## Out of Scope (v1)
 
 - Type-aware validation (e.g. ensuring added struct field name doesn't conflict)
 - Generated file detection (`.pb.go`, `_mock.go`)
 - Multi-file atomic transactions
-- Non-Go languages
 
 ---
 

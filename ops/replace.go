@@ -25,6 +25,9 @@ type ASTReplaceArgs struct {
 
 // HandleASTReplace implements the ast_replace tool.
 func HandleASTReplace(ctx context.Context, req mcp.CallToolRequest, args ASTReplaceArgs) (*mcp.CallToolResult, error) {
+	if isReadonly(args.File) {
+		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+	}
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
 		return toolError(fmt.Sprintf("parse path: %v", err)), nil

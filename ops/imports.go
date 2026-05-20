@@ -41,6 +41,9 @@ type ImportInfo struct {
 
 // HandleAddImport implements the ast_add_import tool.
 func HandleAddImport(ctx context.Context, req mcp.CallToolRequest, args AddImportArgs) (*mcp.CallToolResult, error) {
+	if isReadonly(args.File) {
+		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+	}
 	result, err := editor.Edit(args.File, false, func(f *ast.File, fset *token.FileSet) error {
 		if args.Alias == "" {
 			astutil.AddImport(fset, f, args.Path)

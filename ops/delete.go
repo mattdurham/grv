@@ -23,6 +23,9 @@ type ASTDeleteArgs struct {
 
 // HandleASTDelete implements the ast_delete tool.
 func HandleASTDelete(ctx context.Context, req mcp.CallToolRequest, args ASTDeleteArgs) (*mcp.CallToolResult, error) {
+	if isReadonly(args.File) {
+		return toolError(fmt.Sprintf("file is readonly: %s", args.File)), nil
+	}
 	var steps []selector.PathStep
 	if err := json.Unmarshal(args.Path, &steps); err != nil {
 		return toolError(fmt.Sprintf("parse path: %v", err)), nil

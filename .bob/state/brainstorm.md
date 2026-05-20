@@ -1391,3 +1391,369 @@ Key technical decisions for the implementer:
 7. ast_find_symbols: path.Match + lowercase both sides for case-insensitive glob
 8. Shared path reconstruction helper reused by ast_node_at and ast_find
 9. Register all 4 tools in server.go
+
+---
+
+## 2026-05-20 10:53:27 - Tier 3 Research: Type-Aware LSP Operations
+
+### Task
+Implement 3 tools using go/types: ast_find_refs, ast_find_def, ast_find_impls.
+All use go/packages.Load for package-scope type resolution.
+
+---
+
+## 2026-05-20 10:53:27 - Research Findings
+
+### Question 1: go/packages LoadMode flags
+
+**Required flags** (confirmed by experiment):
+```go
+packages.NeedTypesInfo | packages.NeedTypes | packages.NeedSyntax | packages.NeedFiles | packages.NeedImports | packages.NeedName
+```
+
+- `NeedTypesInfo` — provides `TypesInfo.Uses` and `TypesInfo.Defs` maps
+- `NeedTypes` — provides `pkg.Types` (`*types.Package`) needed for `scope.Lookup()` and `types.Implements()`
+- `NeedSyntax` — provides `pkg.Syntax` (`[]*ast.File`), needed to walk AST and match idents
+- `NeedFiles` — provides `pkg.GoFiles` (file path list), useful for resolving filenames
+- `NeedImports` — needed so that cross-package `Uses` entries have their objects fully resolved
+- `NeedName` — provides `pkg.Name` and `pkg.PkgPath`
+
+`NeedFiles` is technically optional but costs little and helps with filename normalization.
+
+**Loading pattern** — always use `"."` with `Dir` set:
+```go
+cfg := &packages.Config{
+    Mode: packages.NeedTypesInfo | packages.NeedTypes | packages.NeedSyntax |
+          packages.NeedFiles | packages.NeedImports | packages.NeedName,
+    Dir: filepath.Dir(filePath),
+}
+pkgs, err := packages.Load(cfg, ".")
+```
+
+**Do NOT use `"file="+filePath`**: Both patterns produce identical results in practice (confirmed experimentally), but `"."` + `Dir` is cleaner — it loads the whole package the file belongs to, which is exactly what we need for package-scope operations. The `file=` pattern also works but semantically means "the package containing this specific file", which is the same result but less explicit.
+
+**Latency**: ~50ms per call on a small package (ops/, ~800 lines, 8 files). This is acceptable for tool invocations but prohibits calling per-identifier. Call once per tool handler, use the result. No in-process caching needed — each MCP tool call is independent and 50ms is well within interactive tolerance.
+
+### Question 2: ast_find_refs implementation
+
+**File scope (fast, AST-only)**:
+1. Navigate to node with `selector.Navigate(f, steps)`
+2. Extract declaration name string via `extractDeclName(node)` (already exists in `rename.go`)
+3. Walk AST with `astutil.Apply`, collect all `*ast.Ident` where `ident.Name == declName`
+4. Return as list of `{file, path, kind, line}` using `buildPath()` (already in `lsp.go`)
+
+Note: File-scope find_refs is approximate (same as `ast_rename`) — it matches by name string, not by type system. Document this limitation in the tool description.
+
+**Package scope (type-accurate)**:
+1. Navigate to node, extract name ident's position (line, col) from editor's fset
+2. Call `loadPackage(filePath)` to get `*packages.Package`
+3. Scan `pkg.TypesInfo.Defs` to find the `*ast.Ident` at that file:line:col → get `declObj types.Object`
+4. Walk all files in `pkg.Syntax`, check `pkg.TypesInfo.Uses[ident] == declObj`
+5. For each matching ident, build the path in that file's AST
+
+**Extracting declaration name ident from a path**: The path navigation returns an `ast.Node`. The name ident is extracted differently per node type:
+```go
+func extractNameIdent(node ast.Node) (*ast.Ident, bool) {
+    switch n := node.(type) {
+    case *ast.FuncDecl:  return n.Name, true
+    case *ast.TypeSpec:  return n.Name, true
+    case *ast.Field:     if len(n.Names) > 0 { return n.Names[0], true }
+    case *ast.ValueSpec: if len(n.Names) > 0 { return n.Names[0], true }
+    case *ast.Ident:     return n, true
+    }
+    return nil, false
+}
+```
+
+**Bridge between editor fset and pkg.Fset**: `editor.ParseFile` and `packages.Load` use independent `token.FileSet` instances — `token.Pos` values are NOT comparable across them. The bridge is the textual position `(filename, line, column)`:
+- Get position from editor fset: `editorFset.Position(nameIdent.Pos())` → `{Filename, Line, Column}`
+- In pkg.Syntax, find matching ident: `pkg.Fset.Position(ident.Pos()).Line == targetLine && .Column == targetCol`
+
+This was confirmed experimentally — both fsets produce the same line/col for the same source location.
+
+### Question 3: ast_find_def implementation
+
+**Given file + line + col (from path navigation)**:
+1. Navigate to node via path, extract the target name ident
+2. Get its position from editor fset
+3. `loadPackage(filePath)` to get `*packages.Package`
+4. Find matching `*ast.Ident` in `pkg.Syntax` at that position
+5. Look up `pkg.TypesInfo.Uses[ident]` to get the `types.Object`
+6. If nil, it's a declaration site — no definition to jump to (or return self)
+7. If non-nil, `obj.Pos()` gives the definition position
+
+**Handling built-ins and external symbols**:
+- Built-in functions (`len`, `cap`, `make`, etc.): `obj.Pos().IsValid()` returns `false`. Return `{"builtin": true, "name": "len"}` instead of a file location.
+- External package symbols (e.g., `fmt.Println`): `obj.Pos().IsValid()` is `true`, and `pkg.Fset.Position(obj.Pos()).Filename` points to a file in the Go module cache (e.g., `$GOPATH/pkg/mod/...`). Return `{"external": true, "package": obj.Pkg().Path(), "name": obj.Name()}` if the file is not within the project directory, or return the file path if it's readable.
+- Same-package symbols: `obj.Pos().IsValid()` is `true` and `Filename` is within the package dir. Return `{file, line, col}`.
+
+Confirmed: `pkg.Fset.Position(builtinObj.Pos())` for `len` returns `{Filename: "", Line: -1, Column: -1}` (invalid position).
+
+### Question 4: ast_find_impls implementation
+
+**From TypeSpec path → *types.Interface**:
+```go
+// 1. Navigate to TypeSpec
+node, _, _ := selector.Navigate(f, steps)  // returns *ast.TypeSpec
+ts := node.(*ast.TypeSpec)
+
+// 2. Get position of name ident
+namePos := editorFset.Position(ts.Name.Pos())
+
+// 3. In pkg.TypesInfo.Defs, find object at that position
+var ifaceType *types.Interface
+for ident, obj := range pkg.TypesInfo.Defs {
+    p := pkg.Fset.Position(ident.Pos())
+    if p.Line == namePos.Line && p.Column == namePos.Column {
+        underlying := obj.Type().Underlying()
+        if iface, ok := underlying.(*types.Interface); ok {
+            ifaceType = iface
+        }
+        break
+    }
+}
+```
+
+**Walking implementors**:
+```go
+scope := pkg.Types.Scope()
+for _, name := range scope.Names() {
+    obj := scope.Lookup(name)
+    typeName, ok := obj.(*types.TypeName)
+    if !ok || typeName.IsAlias() {
+        continue
+    }
+    T := typeName.Type()
+    // Check both value and pointer receivers
+    if types.Implements(T, ifaceType) || types.Implements(types.NewPointer(T), ifaceType) {
+        // Found an implementor
+    }
+}
+```
+
+Experimentally confirmed:
+- `Cat` (value receiver `String()`) → `types.Implements(Cat, Stringer) = true`
+- `Dog` (pointer receiver `*Dog.String()`) → `types.Implements(Dog, Stringer) = false`, `types.Implements(*Dog, Stringer) = true`
+- The interface itself (`Stringer`) → `types.Implements(Stringer, Stringer) = true` — filter this out
+- `Fish` (no method) → both `false`
+
+**Important**: Also check `typeName.Type() == ifaceType.Underlying()` to skip the interface itself — or simply skip `*types.Interface` underlying types.
+
+### Question 5: loadPackage shared helper
+
+```go
+// loadPackage loads the Go package containing filePath using go/packages.
+// Returns the first package with no errors, or an error if loading fails.
+func loadPackage(filePath string) (*packages.Package, *token.FileSet, error) {
+    cfg := &packages.Config{
+        Mode: packages.NeedTypesInfo | packages.NeedTypes | packages.NeedSyntax |
+              packages.NeedFiles | packages.NeedImports | packages.NeedName,
+        Dir: filepath.Dir(filePath),
+    }
+    pkgs, err := packages.Load(cfg, ".")
+    if err != nil {
+        return nil, nil, fmt.Errorf("packages.Load: %w", err)
+    }
+    if len(pkgs) == 0 {
+        return nil, nil, fmt.Errorf("no packages found in %s", filepath.Dir(filePath))
+    }
+    pkg := pkgs[0]
+    // Collect non-fatal package errors (type errors etc.) but still return the package
+    // because TypesInfo is often populated even with type errors
+    var errMsgs []string
+    for _, e := range pkg.Errors {
+        errMsgs = append(errMsgs, e.Msg)
+    }
+    if pkg.TypesInfo == nil {
+        return nil, nil, fmt.Errorf("type info not available (errors: %v)", errMsgs)
+    }
+    return pkg, pkg.Fset, nil
+}
+```
+
+Note: Return `pkg.Fset` separately — the caller needs it to convert `token.Pos` values to file positions.
+
+### Question 6: Testability strategy
+
+**Decision: Use testdata/typesdata/ as a mini Go module.**
+
+Confirmed working:
+```
+testdata/typesdata/
+  go.mod     (module example.com/typesdata; go 1.21)
+  types.go   (package typesdata — interfaces, structs, functions)
+```
+
+`packages.Load` with `Dir: "testdata/typesdata"` successfully loads and type-checks this mini module in 40-50ms.
+
+**Why NOT use goast module itself as test target**:
+1. Tests would depend on goast's own source structure — brittle (renames, moves break tests)
+2. Circular: testing the tool that analyzes goast using goast
+3. Slower: loading all of ops/ (8 files) is slower than a tiny module
+4. Harder to control: can't add a deliberate "Fish doesn't implement Stringer" to goast source
+
+**Why testdata/typesdata/ is better**:
+1. Stable: the mini module content is test-controlled
+2. Intentional: can add interfaces, implementors, non-implementors deliberately
+3. Fast: tiny module loads quickly
+4. Isolated: independent go.mod means no coupling to main module's dependencies
+
+**The writeTempModule helper** for tests:
+```go
+// writeTempModule creates a temporary Go module with the given source file.
+// Returns the directory containing the module.
+func writeTempModule(t *testing.T, source string) string {
+    t.Helper()
+    dir := t.TempDir()
+    if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/typetest\n\ngo 1.21\n"), 0644); err != nil {
+        t.Fatal(err)
+    }
+    if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(source), 0644); err != nil {
+        t.Fatal(err)
+    }
+    return dir
+}
+```
+
+Tests then use `filePath := filepath.Join(dir, "types.go")` as input.
+
+**Alternative: pre-committed testdata/typesdata/** — commit a fixed mini module so tests don't regenerate it on every run. This is slightly faster (avoids WriteFile) but both approaches are fine.
+
+**Recommendation**: Commit `testdata/typesdata/` as a fixed mini module. Its content can be expanded as new test scenarios are needed. Use `writeTempModule` for tests that need custom source not covered by the fixed fixtures.
+
+---
+
+## 2026-05-20 10:53:27 - Approaches Considered (Tier 3)
+
+### Approach 1: Separate ops/types.go file, shared loadPackage helper
+
+Implement all 3 tools in a new `ops/types.go` file following the exact pattern of `ops/lsp.go`. Export handler functions (`HandleASTFindRefs`, `HandleASTFindDef`, `HandleASTFindImpls`). Keep `loadPackage` as an unexported helper in the same file.
+
+**Pros:**
+- Follows existing file layout (one concern per file)
+- Shared `loadPackage` is co-located with its users
+- Easy to add a `typesdata` test fixture alongside `ops/types_test.go`
+- Consistent with `ops/lsp.go`, `ops/rename.go` pattern
+
+**Cons:**
+- `loadPackage` is only used by this one file (not truly shared across files)
+- All 3 tools in one file may get large (~400-500 lines)
+
+**Fits existing patterns:** Yes — `ops/lsp.go` is ~600 lines with 4 tools.
+
+### Approach 2: Split into ops/refs.go, ops/def.go, ops/impls.go with shared ops/pkgload.go
+
+Three separate files for the three tools. A fourth file `ops/pkgload.go` exports the `loadPackage` helper.
+
+**Pros:**
+- Finer granularity
+- `loadPackage` clearly shared
+
+**Cons:**
+- Unnecessary fragmentation for 3 closely related tools
+- More files to navigate
+- Against the pattern (existing tools are grouped by feature, not split per-operation)
+
+**Fits existing patterns:** No — existing grouping is by feature cluster.
+
+### Approach 3: Single ops/types.go with inlined package loading
+
+No shared helper — each handler calls `packages.Load` directly inline.
+
+**Pros:**
+- Maximum simplicity
+- No helper function abstraction
+
+**Cons:**
+- Duplication of ~10 lines of packages.Load setup in 3 places
+- Error handling inconsistency risk
+- Harder to update LoadMode flags
+
+**Fits existing patterns:** No — existing code extracts helpers (toolError, navError, buildPath, etc.)
+
+---
+
+## 2026-05-20 10:53:27 - Recommendation (Tier 3)
+
+### Chosen Approach: Approach 1 — Single ops/types.go + shared loadPackage
+
+**Rationale:**
+- Matches `ops/lsp.go` pattern exactly: one file, multiple related tools, shared unexported helpers
+- `loadPackage` is a natural private helper alongside its 3 callers
+- Single `ops/types_test.go` using `testdata/typesdata/` fixture module
+- Keeps the diff reviewable in one place
+
+**Implementation Strategy:**
+
+1. **Create `testdata/typesdata/`** — mini Go module with:
+   - `Stringer` interface (value method)
+   - `Dog` (pointer receiver), `Cat` (value receiver), `Fish` (no impl)
+   - `Add`, `Subtract`, `Call` functions (where `Call` uses `Add` — for find_refs)
+   - Commit it; tests reference `../../testdata/typesdata/types.go`
+
+2. **Implement `loadPackage`** in `ops/types.go`:
+   - Signature: `loadPackage(filePath string) (*packages.Package, error)`
+   - `pkg.Fset` is returned via `pkg` directly (`pkg.Fset` is a field on `*packages.Package`)
+   - Mode: `NeedTypesInfo | NeedTypes | NeedSyntax | NeedFiles | NeedImports | NeedName`
+   - Error if `pkg.TypesInfo == nil`
+
+3. **Implement `extractNameIdentFromPath`** in `ops/types.go`:
+   - Parse file, navigate path, extract `*ast.Ident` name and its `fset.Position()`
+   - Returns `(identName string, line int, col int, err error)`
+
+4. **Implement `findIdentInPkg`** — given `(pkg, filename, line, col)`, scan `pkg.Syntax` to find matching `*ast.Ident`:
+   - Match on `filepath.Base(filename)` for robustness (temp dirs vs absolute paths)
+   - Actually: use full path match when available, fall back to base name
+   - Returns `(*ast.Ident, bool)`
+
+5. **Implement `HandleASTFindRefs`**:
+   - File scope: `extractDeclName(node)` + `astutil.Apply` name-string match
+   - Package scope: `loadPackage` + `findIdentInPkg` + `TypesInfo.Defs[ident]` + walk all syntax files checking `TypesInfo.Uses[ident] == declObj`
+
+6. **Implement `HandleASTFindDef`**:
+   - `loadPackage` + `findIdentInPkg` + `TypesInfo.Uses[ident]`
+   - If `obj.Pos().IsValid()`: return file + line + col + path reconstruction
+   - If `!obj.Pos().IsValid()`: return `{"builtin": true, "name": obj.Name()}`
+   - Also handle: `TypesInfo.Defs[ident]` for the case where the path points at a declaration (return self)
+
+7. **Implement `HandleASTFindImpls`**:
+   - `loadPackage` + `findIdentInPkg` + `TypesInfo.Defs[ident]`
+   - `obj.Type().Underlying().(*types.Interface)` — error if not interface
+   - Walk `pkg.Types.Scope().Names()`, check `types.Implements(T, iface)` and `types.Implements(types.NewPointer(T), iface)`
+   - Skip the interface type itself from results
+
+8. **Register all 3 in server.go**
+
+**Key Decisions:**
+
+- **fset bridge via line+col**: Both `editor.ParseFile`'s fset and `packages.Load`'s `pkg.Fset` are independent; bridge via textual position `(line, col)` confirmed working.
+- **File-scope find_refs is name-only**: Document in tool description. Same approximation as `ast_rename`.
+- **Package-scope includes the declaration site**: Optionally include the declaration in find_refs results (design.md is silent; include it with a `"is_decl": true` marker).
+- **`loadPackage` returns `*packages.Package` not `(*packages.Package, *token.FileSet)`**: `pkg.Fset` is a public field on `packages.Package`, no need to return separately.
+- **50ms latency is acceptable**: Per design.md's constraint "package scope = use go/packages, accept it".
+- **testdata/typesdata is a committed fixture**: Avoids per-test module creation overhead.
+
+**Risks Identified:**
+
+- **File in temp dir**: `writeTempFile` puts files in OS temp dirs — `packages.Load` with `Dir: filepath.Dir(tempFile)` will fail because there's no `go.mod` in the temp dir. Tier 3 tests MUST use `writeTempModule` (dir + go.mod). File-scope tests can still use `writeTempFile`. 
+  Mitigation: Use `testdata/typesdata/` as primary fixture; only use `writeTempModule` for custom scenarios.
+
+- **pkg.Errors with TypesInfo present**: `packages.Load` may return non-nil errors (e.g., import cycle, type errors) but still populate `TypesInfo`. Check `pkg.TypesInfo != nil` before proceeding; log errors but don't fail.
+
+- **Column numbers in fset bridge**: Confirmed working for top-level declarations (col 6 for `func F`, col 2 for struct fields). Edge case: generated code or files with non-UTF8 content. Low risk for the target use case.
+
+- **`selector.Navigate` uses editor's fset**: The `editor.ParseFile` parse is separate from `packages.Load`. This adds ~1-2ms for a second parse of the same file. Acceptable.
+
+**Open Questions:**
+
+- Should `ast_find_def` also check `pkg.TypesInfo.Defs[ident]` (i.e., return self if the path IS the declaration)? Recommendation: yes — return `{"is_decl": true, ...}` to avoid confusing "no definition found" with "this is the definition".
+
+---
+
+## 2026-05-20 10:53:27 - BRAINSTORM COMPLETE (Tier 3)
+
+**Status:** Complete
+**Recommendation:** Single ops/types.go + shared loadPackage + testdata/typesdata/ mini-module
+**Next Phase:** PLAN
+
+Ready for workflow-planner agent to create detailed implementation plan for Tier 3 tools.
