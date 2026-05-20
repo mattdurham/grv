@@ -4,7 +4,8 @@ SKILL_DIR := $(HOME)/.claude/skills/lth-grv
 .PHONY: install install-skill build test test-race test-cover clean
 
 install: build
-	install -m 755 grv /usr/local/bin/grv
+	@mkdir -p $(HOME)/.local/bin
+	install -m 755 grv $(HOME)/.local/bin/grv
 
 # Install the lth-grv Claude Code skill
 install-skill:

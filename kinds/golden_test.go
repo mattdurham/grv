@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/token"
 	"os"
 	"os/exec"
@@ -649,4 +650,115 @@ func TestGoldenStructAndMethod(t *testing.T) {
 	if strings.TrimSpace(out) != "7" {
 		t.Errorf("expected 7, got %q", out)
 	}
+}
+
+// TestGoldenDocComment generates a function with a doc comment and verifies
+// it appears in the formatted output. Note: go/printer preserves doc comments
+// attached to declarations but NOT freestanding comments between statements.
+func TestGoldenDocComment(t *testing.T) {
+	// Build:
+	//   // Add adds two integers.
+	//   func Add(a, b int) int { return a + b }
+	// Then confirm the formatted source contains the comment.
+	intType := ident("int")
+	params := []json.RawMessage{
+		field([]string{"a", "b"}, intType),
+	}
+	results := []json.RawMessage{field(nil, intType)}
+
+	sum, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("a"), Op: "+", Y: ident("b")})
+	body := block(returnStmt(sum))
+	addFn := funcDecl("Add", params, results, body)
+
+	// Build the ast.FuncDecl manually so we can attach a doc comment
+	node, err := kinds.UnmarshalNode(addFn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addAST, err := node.ToAST()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Attach doc comment directly to the FuncDecl AST node
+	fd := addAST.(*ast.FuncDecl)
+	fd.Doc = &ast.CommentGroup{List: []*ast.Comment{
+		{Text: "// Add adds two integers."},
+	}}
+
+	fset := token.NewFileSet()
+	file := &ast.File{
+		Name:  &ast.Ident{Name: "main"},
+		Decls: []ast.Decl{buildDecl(t, importDecl("fmt")), fd},
+	}
+
+	// Add a main that calls Add
+	mainBody := block(exprStmt(call(sel(ident("fmt"), "Println"), call(ident("Add"), intLit("3"), intLit("4")))))
+	mainFn := funcDecl("main", nil, nil, mainBody)
+	file.Decls = append(file.Decls, buildDecl(t, mainFn))
+
+	var buf bytes.Buffer
+	if err := format.Node(&buf, fset, file); err != nil {
+		t.Fatalf("format failed: %v", err)
+	}
+	src := buf.String()
+
+	// Doc comment must be preserved in formatted output
+	if !strings.Contains(src, "// Add adds two integers.") {
+		t.Errorf("doc comment not preserved in formatted source:\n%s", src)
+	}
+
+	// Run it
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	os.WriteFile(goFile, []byte(src), 0644)
+	out, err := exec.Command("go", "run", goFile).Output()
+	if err != nil {
+		t.Fatalf("go run failed; source:\n%s", src)
+	}
+	if strings.TrimSpace(string(out)) != "7" {
+		t.Errorf("expected 7, got %q", out)
+	}
+}
+
+// TestCommentPreservationLimitation documents the known limitation:
+// freestanding comments between statements are lost after AST construction
+// because go/ast does not represent them as attached nodes.
+func TestCommentPreservationLimitation(t *testing.T) {
+	// Parse source with inline comments
+	src := `package main
+
+import "fmt"
+
+func main() {
+	// This comment is between statements
+	x := 1
+	// Another comment
+	fmt.Println(x)
+}
+`
+	// Round-trip through editor.ParseFile → format.Node
+	// The freestanding comments will survive because we're using ParseComments
+	// and NOT modifying the AST — just reformatting.
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := format.Node(&buf, fset, f); err != nil {
+		t.Fatalf("format: %v", err)
+	}
+	formatted := buf.String()
+
+	// Comments survive if we parse-then-reformat WITHOUT modifying the AST
+	if !strings.Contains(formatted, "// This comment is between statements") {
+		t.Log("Note: freestanding comments lost when reformatting parsed source")
+		t.Log("This is a known go/ast limitation — doc/inline comments on nodes are preserved,")
+		t.Log("but freestanding comments between statements may be lost after structural edits.")
+	}
+
+	// Doc comments on declarations ARE preserved even after construction
+	// (see TestGoldenDocComment above)
 }

@@ -94,3 +94,107 @@ func TestListDaemonsEmpty(t *testing.T) {
 	// May or may not be empty depending on whether a daemon is running
 	_ = statuses
 }
+
+// ---- convert ----
+
+func TestBuildConvertResult_Basic(t *testing.T) {
+	// BuildConvertResult processes ast_directory JSON into a ConvertResult.
+	// We feed it a synthetic directory listing and check the counts.
+	input := `{
+		"go_files": [
+			{"file":"main.go","readonly":false,"package":"main","structs":[],"functions":[{},{}]},
+			{"file":"vendor/pkg/lib.go","readonly":true,"package":"lib","structs":[{}],"functions":[{}]}
+		],
+		"non_go_files": [
+			{"file":"README.md","readonly":false,"size":1024},
+			{"file":"go.mod","readonly":false,"size":256}
+		],
+		"subdirs": ["cmd","daemon"]
+	}`
+
+	result, err := cmd.BuildConvertResult([]byte(input))
+	if err != nil {
+		t.Fatalf("BuildConvertResult: %v", err)
+	}
+
+	if result.ReadWrite != 3 { // main.go + README.md + go.mod
+		t.Errorf("ReadWrite: expected 3, got %d", result.ReadWrite)
+	}
+	if result.ReadOnly != 1 { // vendor/pkg/lib.go
+		t.Errorf("ReadOnly: expected 1, got %d", result.ReadOnly)
+	}
+	if len(result.GoFiles) != 2 {
+		t.Errorf("GoFiles: expected 2, got %d", len(result.GoFiles))
+	}
+	if len(result.NonGoFiles) != 2 {
+		t.Errorf("NonGoFiles: expected 2, got %d", len(result.NonGoFiles))
+	}
+	if len(result.Subdirs) != 2 {
+		t.Errorf("Subdirs: expected 2, got %d", len(result.Subdirs))
+	}
+}
+
+func TestBuildConvertResult_EmptyDir(t *testing.T) {
+	input := `{"go_files":[],"non_go_files":[],"subdirs":[]}`
+	result, err := cmd.BuildConvertResult([]byte(input))
+	if err != nil {
+		t.Fatalf("BuildConvertResult: %v", err)
+	}
+	if result.ReadWrite != 0 || result.ReadOnly != 0 {
+		t.Errorf("expected 0 files, got rw=%d ro=%d", result.ReadWrite, result.ReadOnly)
+	}
+}
+
+func TestBuildConvertResult_AllReadOnly(t *testing.T) {
+	input := `{
+		"go_files": [
+			{"file":"std/fmt/print.go","readonly":true,"package":"fmt","structs":[],"functions":[]}
+		],
+		"non_go_files": [],
+		"subdirs": []
+	}`
+	result, err := cmd.BuildConvertResult([]byte(input))
+	if err != nil {
+		t.Fatalf("BuildConvertResult: %v", err)
+	}
+	if result.ReadOnly != 1 {
+		t.Errorf("expected 1 readonly, got %d", result.ReadOnly)
+	}
+	if result.ReadWrite != 0 {
+		t.Errorf("expected 0 readwrite, got %d", result.ReadWrite)
+	}
+}
+
+func TestConvertReport_ContainsKeyInfo(t *testing.T) {
+	// ConvertReport produces a string that mentions file counts and status markers.
+	input := `{
+		"go_files": [
+			{"file":"main.go","readonly":false,"package":"main","structs":[{}],"functions":[{},{},{}]}
+		],
+		"non_go_files": [
+			{"file":"config.yaml","readonly":false,"size":512}
+		],
+		"subdirs": ["internal"]
+	}`
+	result, err := cmd.BuildConvertResult([]byte(input))
+	if err != nil {
+		t.Fatalf("BuildConvertResult: %v", err)
+	}
+	report := cmd.FormatConvertReport("/some/dir", result, false)
+
+	if !strings.Contains(report, "main.go") {
+		t.Error("report should mention main.go")
+	}
+	if !strings.Contains(report, "config.yaml") {
+		t.Error("report should mention config.yaml")
+	}
+	if !strings.Contains(report, "[rw]") {
+		t.Error("report should show [rw] for writable files")
+	}
+	if !strings.Contains(report, "Read-write: 2") {
+		t.Errorf("report should show Read-write: 2, got:\n%s", report)
+	}
+	if !strings.Contains(report, "internal") {
+		t.Error("report should list subdirs")
+	}
+}

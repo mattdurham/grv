@@ -10,11 +10,86 @@ import (
 	"strings"
 )
 
+// ConvertResult holds the parsed output of an ast_directory call.
+type ConvertResult struct {
+	GoFiles    []GoFileEntry
+	NonGoFiles []NonGoFileEntry
+	Subdirs    []string
+	ReadWrite  int
+	ReadOnly   int
+}
+
+// BuildConvertResult parses an ast_directory JSON response into a ConvertResult.
+func BuildConvertResult(data []byte) (*ConvertResult, error) {
+	var raw struct {
+		GoFiles    []GoFileEntry    `json:"go_files"`
+		NonGoFiles []NonGoFileEntry `json:"non_go_files"`
+		Subdirs    []string         `json:"subdirs"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	r := &ConvertResult{GoFiles: raw.GoFiles, NonGoFiles: raw.NonGoFiles, Subdirs: raw.Subdirs}
+	for _, f := range raw.GoFiles {
+		if f.Readonly {
+			r.ReadOnly++
+		} else {
+			r.ReadWrite++
+		}
+	}
+	for _, f := range raw.NonGoFiles {
+		if f.Readonly {
+			r.ReadOnly++
+		} else {
+			r.ReadWrite++
+		}
+	}
+	return r, nil
+}
+
+// FormatConvertReport renders a ConvertResult as a human-readable string.
+func FormatConvertReport(dir string, r *ConvertResult, apply bool) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "grv convert: analyzing %s\n\n", dir)
+
+	fmt.Fprintf(&sb, "GO FILES (%d):\n", len(r.GoFiles))
+	for _, f := range r.GoFiles {
+		status := "rw"
+		if f.Readonly {
+			status = "ro"
+		}
+		fmt.Fprintf(&sb, "  [%s] %s  (pkg: %s, structs: %d, funcs: %d)\n",
+			status, f.File, f.Package, len(f.Structs), len(f.Functions))
+	}
+
+	fmt.Fprintf(&sb, "\nNON-GO FILES (%d):\n", len(r.NonGoFiles))
+	for _, f := range r.NonGoFiles {
+		status := "rw"
+		if f.Readonly {
+			status = "ro"
+		}
+		fmt.Fprintf(&sb, "  [%s] %s (%d bytes)\n", status, f.File, f.Size)
+	}
+
+	if len(r.Subdirs) > 0 {
+		fmt.Fprintf(&sb, "\nSUBDIRS: %s\n", strings.Join(r.Subdirs, ", "))
+	}
+
+	fmt.Fprintf(&sb, "\nSUMMARY:\n")
+	fmt.Fprintf(&sb, "  Read-write: %d files (grv can modify these)\n", r.ReadWrite)
+	fmt.Fprintf(&sb, "  Read-only:  %d files (vendor, stdlib, or module cache)\n", r.ReadOnly)
+
+	if apply {
+		fmt.Fprintf(&sb, "\nAPPLY MODE: no transforms defined yet.\n")
+		fmt.Fprintf(&sb, "Future: transforms queued via grv ast_insert/ast_replace --dry_run will be applied here.\n")
+	} else {
+		fmt.Fprintf(&sb, "\nRun `grv convert %s --apply` to apply transforms (when available).\n", dir)
+	}
+	return sb.String()
+}
+
 // RunConvert analyzes an existing codebase directory and produces a
-// conversion report showing which files can be read/written by grv,
-// which are readonly (vendor, stdlib, module cache), and a summary
-// of all Go symbols found. Writes non-readonly files using grv write
-// tools when --apply is passed.
+// conversion report showing which files can be read/written by grv.
 //
 // Usage:
 //
@@ -27,7 +102,6 @@ func RunConvert(dir string) {
 		os.Exit(1)
 	}
 
-	// Determine apply mode
 	apply := false
 	for _, arg := range os.Args {
 		if arg == "--apply" {
@@ -35,9 +109,6 @@ func RunConvert(dir string) {
 		}
 	}
 
-	fmt.Printf("grv convert: analyzing %s\n\n", abs)
-
-	// 1. Get directory inventory via the daemon
 	sockPath, err := resolveSock(abs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "grv convert: cannot connect to daemon: %v\n", err)
@@ -55,63 +126,13 @@ func RunConvert(dir string) {
 		os.Exit(1)
 	}
 
-	// Parse response
-	var result struct {
-		GoFiles    []GoFileEntry    `json:"go_files"`
-		NonGoFiles []NonGoFileEntry `json:"non_go_files"`
-		Subdirs    []string         `json:"subdirs"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
+	result, err := BuildConvertResult(resp)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "grv convert: parse response: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 2. Report
-	readwrite := 0
-	readonly := 0
-
-	fmt.Printf("GO FILES (%d):\n", len(result.GoFiles))
-	for _, f := range result.GoFiles {
-		status := "rw"
-		if f.Readonly {
-			status = "ro"
-			readonly++
-		} else {
-			readwrite++
-		}
-		structs := len(f.Structs)
-		funcs := len(f.Functions)
-		fmt.Printf("  [%s] %s  (pkg: %s, structs: %d, funcs: %d)\n",
-			status, f.File, f.Package, structs, funcs)
-	}
-
-	fmt.Printf("\nNON-GO FILES (%d):\n", len(result.NonGoFiles))
-	for _, f := range result.NonGoFiles {
-		status := "rw"
-		if f.Readonly {
-			status = "ro"
-			readonly++
-		} else {
-			readwrite++
-		}
-		fmt.Printf("  [%s] %s (%d bytes)\n", status, f.File, f.Size)
-	}
-
-	if len(result.Subdirs) > 0 {
-		fmt.Printf("\nSUBDIRS: %s\n", strings.Join(result.Subdirs, ", "))
-	}
-
-	fmt.Printf("\nSUMMARY:\n")
-	fmt.Printf("  Read-write: %d files (grv can modify these)\n", readwrite)
-	fmt.Printf("  Read-only:  %d files (vendor, stdlib, or module cache)\n", readonly)
-
-	if apply {
-		fmt.Printf("\nAPPLY MODE: no transforms defined yet.\n")
-		fmt.Printf("Future: grv convert will apply pending refactors, renames, and insertions\n")
-		fmt.Printf("        that have been queued via grv ast_insert/ast_replace with --dry_run.\n")
-	} else {
-		fmt.Printf("\nRun `grv convert %s --apply` to apply transforms (when available).\n", abs)
-	}
+	fmt.Print(FormatConvertReport(abs, result, apply))
 }
 
 // GoFileEntry mirrors the ops.GoFileEntry JSON shape for unmarshalling.
