@@ -165,6 +165,22 @@ func TestBuildConvertResult_AllReadOnly(t *testing.T) {
 	}
 }
 
+func TestBuildConvertResult_SkipsHidden(t *testing.T) {
+	// Verify that hidden files (starting with .) are treated as non-Go files
+	input := `{
+		"go_files": [{"file":"main.go","readonly":false,"package":"main","structs":[],"functions":[]}],
+		"non_go_files": [{"file":".gitignore","readonly":false,"size":10}],
+		"subdirs": []
+	}`
+	result, err := cmd.BuildConvertResult([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ReadWrite != 2 {
+		t.Errorf("expected 2 rw files, got %d", result.ReadWrite)
+	}
+}
+
 func TestConvertReport_ContainsKeyInfo(t *testing.T) {
 	// ConvertReport produces a string that mentions file counts and status markers.
 	input := `{
