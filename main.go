@@ -53,6 +53,12 @@ func main() {
 		cmd.PrintGrammar(filter)
 	case "--json":
 		runJSONMode()
+	case "convert":
+		dir := getCWD()
+		if len(os.Args) > 2 {
+			dir = os.Args[2]
+		}
+		cmd.RunConvert(dir)
 	default:
 		runToolMode(os.Args[1:])
 	}
