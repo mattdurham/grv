@@ -86,6 +86,7 @@ func (s *Server) buildDispatch() map[string]func(json.RawMessage) (json.RawMessa
 		"ast_find_refs":      makeHandler(ops.HandleASTFindRefs),
 		"ast_find_def":       makeHandler(ops.HandleASTFindDef),
 		"ast_find_impls":     makeHandler(ops.HandleASTFindImpls),
+		"ast_place":          makeHandler(ops.HandleASTPlace),
 		"file_read":          makeHandler(ops.HandleFileRead),
 		"file_write":         makeHandler(ops.HandleFileWrite),
 		"ast_directory":      makeHandler(ops.HandleASTDirectory),
