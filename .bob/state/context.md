@@ -1,45 +1,70 @@
 # Agent Context
 
 ## Role & Principles
-# Behavioral Rule
+# General Rule
 
-**Specify → Implement → Validate**: Solve problems by establishing clear contracts and documentation first, ensure code adheres to specification through comprehensive testing, then gate delivery with automated quality checks.
-
-Or more concisely:
-
-**"Design-first, test-gated problem solving"** — Define the problem rigorously before coding, then validate against the definition before shipping.
-
-> id: 9a8ca827-9182-4946-8c8a-8724b0c927d2
-
-# Behavioral Rule
-
-**Always validate input bounds before performing indexed access operations.**
+**Verify implementation against intent through layered validation, then document failure modes to prevent recurrence.**
 
 Or more concisely:
 
-**Check before you index.**
+**Test → Fix → Teach → Prevent**
 
 ---
 
-This captures the core heuristic: defensive programming requires explicit verification that indices and ranges are valid *before* attempting to use them for data access, rather than assuming preconditions are met.
+## Why this captures it:
 
-> id: 0378883f-f281-41e5-bb2f-d9d3c83925d2
+1. **Test** = systematic gap identification (code review, build checks, integration tests)
+2. **Fix** = scoped remediation with multi-layer confirmation
+3. **Teach** = context enrichment and anti-pattern documentation
+4. **Prevent** = architectural consistency checks that block future instances
+
+This heuristic generalizes across code quality, guidance accuracy, system design, and documentation—anywhere intent can diverge from execution.
+
+> id: c121b38e-136d-4758-bf98-5c481e17d6d3
 
 # Behavioral Rule
 
-**Decompose observable failures into root causes by systematically isolating variables across system layers, then validate each hypothesis before moving deeper.**
+**"Automate verification at every stage to catch problems early, document findings systematically, and treat code as the source of truth for completion status."**
+
+Or more concisely:
+
+**"Shift left on validation; automate before gates; record in code."**
+
+> id: 49dd6983-2cba-4b57-b75d-3e2bde5aaa05
+
+# Behavioral Rule
+
+**Assign to the dereferenced pointer target, not to the pointer variable itself, when mutating heap-allocated state that will be reused.**
+
+Or more generally:
+
+**Distinguish between rebinding a reference and mutating the referenced object; mutate the object when you intend reuse.**
 
 ---
 
-**Why this captures it:**
-- **"Decompose observable failures"** = symptoms vs. root causes
-- **"Systematically isolating variables"** = isolation tests, narrowing scope
-- **"Across system layers"** = abstraction levels, code → history → design
-- **"Validate each hypothesis before moving deeper"** = prevents rabbit holes, confirms understanding before investing in fixes
+## Why This Matters
 
-This is fundamentally about **hypothesis-driven debugging** — not just collecting information, but testing assumptions at each layer before accepting them as true.
+- Rebinding the local pointer (`p = &s`) only changes what the local variable points to; it doesn't update what the pool will retrieve
+- Mutating through dereference (`*p = ...`) modifies the actual object in the pool
+- This pattern extends beyond sync.Pool to any scenario where a pointer is held elsewhere (caches, registries, shared references)
 
-> id: 268b07a4-12e0-44cb-9ffa-e9d26dcbc323
+> id: 5a1da579-468e-4b41-abf8-2f77da070b8f
+
+# Behavioral Rule
+
+**Decompose complex systems into stateless, composable units that communicate through immutable data structures rather than shared state or modified signatures.**
+
+---
+
+## Why This Captures the Pattern
+
+- **Stateless + composable** = the core architectural choice
+- **Immutable data + explicit communication** = the mechanism enabling it
+- **Rather than shared state/signature changes** = contrasts with the anti-patterns avoided
+
+This generalizes beyond pipelines to any domain requiring concurrency, testability, and reusability (streaming systems, functional middleware, event processors, etc.).
+
+> id: eaa02943-9b77-4f28-92fd-3d0e31db92ef
 
 # Behavioral Rule
 
@@ -53,245 +78,172 @@ This rule captures the essence: identify what condition was missed (root cause),
 
 > id: 9d1de0d1-e4eb-47fd-81ea-36c226e77985
 
-# General Rule
-
-**Keep reality and its description in sync.**
-
-Or more formally as a behavioral rule:
-
-**Whenever documentation and implementation diverge, treat the gap itself as a defect requiring repair—not as acceptable technical debt.**
-
----
-
-## Why this captures it:
-
-The skill is fundamentally about **closing the reference frame between what code does and what people believe it does**. Every manifestation (stale descriptions, undocumented behavior, copy-paste errors, hidden patterns, insufficient tests) is a violation of a single principle: *the system should have a single, authoritative truth about its behavior, accessible to both humans and other systems*.
-
-The heuristic is **preventive and integrative**—it doesn't just fix individual instances; it installs the habit of treating documentation-code gaps as first-class problems worth systematic attention.
-
-> id: 73d12154-7b7a-4517-9915-b4091bc3f9b9
-
 
 ## Relevant Techniques
-# Skill: Metadata Preservation Through Value Transformations
+# Shared Skill: Boundary Validation in Hierarchical Path Matching
 
-**Core Pattern**: Systematically unmark values before operations, extract metadata separately, perform transformations on clean values, then reapply metadata at specific paths afterward. This enables safe handling of sensitive or special-marked data across serialization, state transitions, and external system boundaries while preventing accidental exposure or loss of metadata intent.
+**Core Pattern:** Debugging and fixing path-matching bugs in tree structures where string prefix matching fails to distinguish between actual hierarchical boundaries and coincidental string prefixes.
 
-**Key Disciplines**:
-1. **Bidirectional Symmetry** – Unmarking and remarking operations must remain synchronized; serialization formats must round-trip consistently
-2. **Deterministic Ordering** – Sort metadata paths by canonical representation to ensure reproducible, comparable outputs across state snapshots and diffs
-3. **Schema-Driven Detection** – Rediscover metadata requirements at transformation points rather than relying solely on propagated marks, catching newly-sensitive paths introduced by intermediate operations
-4. **Explicit Validation** – Enforce contracts on which metadata types are allowed in storage; reject unknown marks rather than silently dropping them
-5. **Independent Equality Checking** – Compare metadata state separately from value equality to detect semantic changes (e.g., mark-only updates) that values alone won't reveal
+**Key Technique:** Implementing strict delimiter/boundary validation after prefix matching—confirming that a path separator (forward slash `/`) or other structural marker immediately follows the matched prefix, rather than relying on simple string prefix checks.
 
-> id: 56d72a15-2692-43f3-8ebc-a1b71ab516a2
+**Applied Across:**
+- Section filtering in Hugo's page collections (`s1` vs `s1-foo`)
+- Tree traversal and node skipping logic
+- Hierarchical path disambiguation in nested structures
 
-# Skill: Protocol-Aware Layered Resource Cleanup
+**Debugging Approach:**
+1. Create minimal reproducer test cases demonstrating the failure
+2. Trace root cause to insufficient boundary checking in prefix matching logic
+3. Add structural validation (delimiter presence) to prevent false positives
+4. Establish regression tests covering complex nested hierarchies
 
-**Core Pattern**: When closing wrapped or nested resources (e.g., TCP socket wrapped by SSH client), close from the **outermost protocol layer inward**, ensuring each layer properly terminates before the next is closed.
+**Why It Matters:** In tree structures, string similarity doesn't guarantee hierarchical relationship—proper boundary validation prevents data leakage between sibling branches that share naming prefixes.
 
-**Key Techniques**:
-1. **Protocol-First Closure** – Close the higher-level abstraction first (SSH client) to trigger proper protocol messages (e.g., `SSH_MSG_DISCONNECT`) before closing the raw transport layer
-2. **Nil-Check-Then-Nil Pattern** – Safely close resources by assigning to a local variable, nilifying the reference, then operating on the local copy to prevent double-closes and race conditions
-3. **Fallback Closure** – Retain lower-level cleanup (raw TCP close) as a safety net for edge cases where the upper layer never fully initialized
-4. **Behavioral Verification in Tests** – Validate closure by attempting operations on saved references rather than just checking nil states, catching subtle cases where references are cleared but resources remain open
+> id: f4e418d7-af10-4154-b252-a9eb8fe5a7c9
 
-**Why It Matters**: Skipping protocol-level cleanup leaves server-side connections improperly terminated, orphaned goroutines, and socket leaks—bypassing graceful shutdown handshakes that operating systems and remote services expect.
+# Skill: Systematic Root Cause Analysis Through Code Archaeology
 
-> id: 88c2677e-efa5-4ad0-9ce3-58f257f0cce6
+**Core Pattern:** When encountering bugs in refactored code, distinguish between structural changes and logic changes by:
 
-# Shared Skill: Systematic Root Cause Analysis & Refactoring for Parser Correctness
+1. **Tracing through git history** rather than stopping at obvious refactors
+2. **Verifying callback semantics** and return value meanings in library documentation before assuming behavior
+3. **Testing edge cases** where control flow changes matter (early termination, skipping conditions)
+4. **Checking implementation details** of unfamiliar APIs (e.g., `WalkSkip` vs `WalkContinue`) rather than inferring behavior
 
-These memories demonstrate mastery of **identifying and fixing subtle bugs in token/syntax parsing systems through methodical investigation, abstraction, and validation**.
+**Why it matters:** Linter/automated refactoring tools can mask underlying logic errors, making bugs invisible if you only review structural changes. This skill prevents false confidence in "simple" refactors and catches one-character logic inversions (`true`/`false`) that have outsized impact on tree traversal and conditional logic.
 
-**Core Pattern:**
-1. **Problem Detection** → Identify parsing failures (nested imports skipped, token boundaries miscalculated, regex edge cases)
-2. **Root Cause Excavation** → Trace through refactoring history and code flow to find where assumptions broke (import chain tracking removed, token index tracking corrupted, whitespace checks incomplete)
-3. **Abstraction-Based Fixes** → Extract common logic into reusable helpers (`isNextOnNewLine()`, `RemainingArgsAsTokens()`) that restore correctness at a higher level
-4. **Regression Prevention** → Add targeted test cases that document the bug scenario and prevent future refactors from reintroducing it
+> id: e0e08e5c-d114-420b-a2b7-9ccbc6cb3466
 
-**Key Insight:** The agent consistently recognizes that parser bugs stem from **incomplete updates during refactoring**—when logic moves between modules (lexer ↔ dispenser) or when new data structures are introduced (token.imports slice), dependent code must be updated in tandem. The fix pattern is always: centralize the logic, make assumptions explicit, and test edge cases.
+# Shared Skill: Debugging Data Structure Mismatches in Filter/Transformation Systems
 
-> id: d65b7d07-5fb6-43f3-8f13-5a928105bc22
+## Concise Skill Description
 
-# Skill: Systematic API Refactoring and Deprecation Management
+**Identifying and fixing bugs where data is processed using the wrong structural representation or type, causing silent failures or format inconsistencies.** This involves:
 
-**Pattern**: Executing large-scale codebase migrations by:
-1. **Consolidating fragmented APIs** into unified, standardized interfaces (replacing scattered `forwarded` options with single `client_ip` matcher across 11+ files)
-2. **Implementing graceful deprecation strategies** with explicit error messaging at all parsing layers (Caddyfile, CEL, marshaling) to guide users toward replacements rather than silent failures
-3. **Identifying and eliminating code duplication** by recognizing parallel implementations (MatchClientIP/MatchRemoteIP) and extracting shared patterns (parsing helpers, provision phases)
-4. **Ensuring consistency across configuration layers** by synchronizing changes through both configuration parsing and runtime evaluation contexts
-5. **Handling edge cases systematically** (0-RTT blocking, multiple matcher merging, deterministic ordering) with security and predictability as primary concerns
+1. **Type/Structure Mismatch Detection** — Recognizing when code treats data as one type (e.g., simple string) when it's actually another (e.g., array, structured object), leading to filters that parse but don't execute
+2. **Data Flow Validation** — Tracing how data moves through transformation pipelines to catch format divergence (e.g., single array element → multiple elements → reconstructed string)
+3. **Format Normalization** — Ensuring consistent input/output representations across transformation stages, especially with multi-valued fields (cookies, arrays, delimited strings)
+4. **Defensive Validation** — Adding type assertions and format checks at processing boundaries to catch mismatches early rather than silently failing
 
-**Core Competency**: Leading architectural refactors that balance backward compatibility with code quality improvement through multi-point synchronization and deliberate migration paths.
+**Core pattern:** Filter/transformation bugs often aren't logic errors—they're caused by operating on the wrong data representation, requiring investigation of how data is structured at each stage rather than just examining the filter logic itself.
 
-> id: 00f92d1b-ac20-4f92-a57d-1ddfbccf78dd
+> id: 6fcf6e66-7904-48df-9951-3073114ddc62
 
-# Skill: Staged Processing with Separation of Concerns
+# Skill: Debugging Cross-Module Resource Reference Resolution in Configuration Transformers
 
-**Core Pattern**: Decompose complex parsing/processing workflows into distinct phases, each handling a specific responsibility, with explicit ordering constraints and data flow between phases.
+**Core Pattern:** Identifying and fixing bugs where relative resource addresses in nested module contexts fail to match absolute addresses during graph transformation, causing features (like provisioner execution) to silently skip for module-scoped resources while working correctly at the root level.
 
-**Key Characteristics**:
-- **Early extraction and pre-processing**: Identify special cases (matchers, imports, global config) upfront before general processing
-- **Two-pass or multi-phase approach**: Separate parsing into discrete stages (validation → extraction → processing → normalization)
-- **Context encapsulation**: Pass structured state objects (Helpers, maps) through phases rather than accumulating parameters
-- **Validation before consumption**: Check constraints (ordering, references, syntax) before executing dependent logic
+**Key Diagnostic Approach:**
+1. Recognize the symptom: Feature works for root resources but fails for module-scoped resources
+2. Trace the address matching logic across transformation phases (config attachment → orphan planning → provisioner execution)
+3. Identify the mismatch point: Where relative addresses (from module-local `removed` blocks) aren't converted to absolute addresses for global resource matching
+4. Apply the fix: Prepend module path context when storing or comparing resource addresses in cross-module scenarios
 
-**Why It Matters**: Enables predictable behavior, prevents order-of-declaration issues, improves error messages with preserved context, and makes complex workflows maintainable by isolating concerns into independent stages.
+**Critical Implementation Detail:** When processing configuration in module contexts, always construct absolute resource addresses by combining the current module path with relative address components—this ensures global matching logic can find the resource regardless of which module defined the reference.
 
-> id: 81548a28-77cb-49a4-bc34-263645c942ad
+> id: 99e33d86-2293-44cd-935a-8129dd386088
+
+# Skill: Systematic Decomposition of Complex Parsing Pipelines
+
+**Core Pattern**: Breaking down multi-stage parsing systems into clear layers of concern, understanding how each layer's design decisions enable downstream functionality.
+
+**Key Competencies**:
+
+1. **Architectural Thinking** – Identifying and mapping hierarchical abstractions (tokens → segments → blocks; lexer → dispenser → parser) to understand how each layer solves a specific problem without leaking complexity upward.
+
+2. **Separation of Concerns** – Recognizing when to isolate low-level mechanics (byte handling, whitespace) from higher-level logic (structural validation, module routing), and understanding why this separation matters for testability and maintainability.
+
+3. **State & Context Tracking** – Understanding how metadata flows through pipeline stages (filename tracking in tokens, nesting counters for brace matching, snippet origin tracking) to enable correct behavior in later stages without re-parsing.
+
+4. **Polymorphic Handling with Early Dispatch** – Recognizing when different input types (named routes vs. snippets vs. regular blocks) need different processing paths, and solving this by making type distinctions early to route to appropriate handlers rather than repeating logic.
+
+5. **Error Prevention Through Design** – Using structural constraints (e.g., `blockTokens()` brace matching, early nesting validation, duplicate state checks) to catch problems at the source rather than allowing cascading failures downstream.
+
+> id: 5142dc47-cf98-4bcf-a451-13ac6d8b6fa2
 
 
 ## Current Project Context
 # Key Insights
 
-## 1. **AST-Based Code Editing Eliminates String-Level Fragility**
-The core problem: agents fail at code modification because they manipulate text positions/offsets that shift with edits. Solution: abstract to semantic operations on AST nodes instead. Agents express *what* to change (e.g., "add OR condition to if-statement in function X") rather than *where* (line numbers/string positions). This makes patches immune to offset drift and guarantees syntactic validity.
+1. **Case-Insensitivity Fix for GitHub Alerts**
+   - **Problem**: GitHub alert syntax `[!NOTE]`, `[!TIP]`, etc. was only matching uppercase variants
+   - **Solution**: Added the `(?i)` regex flag to enable case-insensitive matching
+   - **Decision**: Validated with test cases covering mixed-case inputs (`[!note]`, `[!Warning]`, `[!tIp]`)
 
-## 2. **Go Ecosystem Already Provides 90% of the Infrastructure**
-Go's standard library (`go/ast`, `go/parser`, `go/printer`, `go/types`) and tools (`gopls`, `x/tools/go/analysis`) already operate internally on ASTs. The missing piece isn't parsing/analysis—it's the *write interface*: structured edit operations that agents can invoke to modify AST and auto-regenerate source. First-mate already does the read side; need to mirror it on the edit side.
+2. **Feature Flag Pattern for Block Attributes**
+   - **Decision**: Made block-level attributes an opt-in feature via configuration (`Parser.Attribute.Block`)
+   - **Implementation**: Attributes extension only activates when the config flag is explicitly enabled, keeping it disabled by default
+   - **Rationale**: Allows safe feature rollout while maintaining backward compatibility
 
-## 3. **Practical MVP: Two-Command Interface with Git Diff as Source of Truth**
-Build `lth ast query` (retrieve structured code elements) and `lth ast apply` (execute JSON-patch edits on AST, regenerate source). Agents never touch raw text; patches are validated by `git diff` on regenerated files. This approach sidesteps comment-preservation and formatting issues in real deployments while making SWE-bench-style hunk failures impossible.
+3. **Attribute Processing Architecture**
+   - **Approach**: Two-phase system using parser + transformer pattern to handle markdown attributes
+   - **Key Detail**: Attributes blocks are applied to their preceding sibling elements, then removed from the AST to avoid rendering empty nodes
+   - **Scope**: Attributes can target fenced code blocks (handled separately) and other block elements
 
-> id: 17667c34-8811-4eed-b5e2-fd3a10c02bb2
+> id: 316055a2-c30f-4ae8-9f8d-1c1cf83dd2bf
+
+When implementing AST node kind files with JSON round-trip (ToAST/FromAST), always include round-trip tests that parse real Go source, call MarshalNode, then ToAST, then go/format to verify formattability. The kinds package is the critical path for all AST operations and needs test coverage at every node type.
+
+> id: 1cb21b68-d96e-446d-ada5-e155e520f1c6
 
 # Key Insights
 
-1. **Dependency Version Fragmentation Issue**: Multiple versions of the same Prometheus modules (prometheus, common, client_golang) are present in the Go module cache with significant version gaps (e.g., v0.32.1, v0.45.0, v0.66.1, v0.67.5 for prometheus/common). This suggests either unresolved dependency conflicts or incomplete cleanup of old versions—consider auditing go.mod for conflicting transitive dependencies and running `go mod tidy`.
+## 1. **Wrapper Block Parsing Strategy**
+**Decision**: Implemented a two-phase approach to handle special `._prefix_.` syntax blocks:
+- Phase 1: Pre-scan the string to identify and record dot positions inside wrapper blocks
+- Phase 2: Skip those dots during main parsing logic
 
-2. **PromQL Parser Deep Investigation**: The extensive listing of promql/parser files (lexer, parser, AST, printer, and tests) indicates a detailed code review or debugging session into query parsing logic. If troubleshooting query execution issues, focus on the parser/lexer interaction and the generated parser grammar (generated_parser.y.go) as potential sources of problems.
+**Problem Solved**: Dots within wrapper blocks were being incorrectly treated as segment separators, breaking the parsing of structured identifiers (language, version, role, etc.).
 
-3. **Labels Handling Consistency Problem**: The labels.go files appear across three different Prometheus packages (schema, model, and prometheus client) in multiple versions. This duplication suggests the need to verify that label handling is consistent across dependencies—mismatched versions could cause serialization/deserialization issues or unexpected query behavior.
-
-> id: 058f92b2-b7f9-4171-8195-6bc48ba3ee84
-
-# Key Insights
-
-## 1. **Two Blocking Mechanisms Exist; Hook Approach Has Workflow Risk**
-You can block tools via `PreToolUse` hooks (returns block decision) or `permissions.allow` list (requires approval). However, a blanket `Read` block breaks unrelated workflows (Claude reading plan.md, configs, etc.). A surgical approach—blocking only source files (.go, .py) while passing through docs—would be more practical, but still fragile.
-
-## 2. **MCP Server Is the Better Pattern for Tool Integration**
-Registering lth as an MCP server (e.g., `lth_read`, `lth_search`, `lth_store`) lets Claude *actively choose* it alongside native tools based on explicit descriptions, rather than silently injecting context or blocking existing tools. This is cleaner, more transparent, and avoids breaking existing agent workflows.
-
-## 3. **Consolidate Into Daemon for Simplicity**
-Rather than a separate MCP binary, integrate MCP protocol support into the existing lth daemon (alongside Prometheus metrics on the same port). This eliminates extra moving parts and keeps lth as a single, unified service.
+**Solution**: The `findWrapperDotPositions()` function isolates wrapper blocks as opaque units by returning a sorted list of "skip" positions, while `isSkippedDot()` efficiently checks membership during parsing.
 
 ---
 
-**Decision:** Build the MCP server into the lth daemon. Let Claude see and choose lth tools explicitly rather than modifying or blocking native tools.
+## 2. **Prefix Tree Traversal with Dual Semantics**
+**Decision**: Created two distinct walk methods (`WalkPrefix` vs `WalkPath`) for different traversal needs:
+- `WalkPrefix`: walks *all descendants* under a prefix (downward)
+- `WalkPath`: walks *only the direct path* to a leaf, visiting ancestors (upward)
 
-> id: f421129f-0fe4-4940-a534-cc5ff950ebad
+**Problem Encountered**: Single traversal logic couldn't efficiently handle both "find everything matching this prefix" and "validate the path to this specific key" use cases.
+
+**Solution**: Separated concerns with explicit prefix-matching logic and early termination strategies, using a handler callback pattern for flexibility in what to do at each node.
+
+> id: f5909d1a-0316-4b87-b90d-2cabb24f5e49
+
+# Key Insights Summary
+
+## 1. **Comprehensive Test Coverage Validates AST Extension**
+All 52 tests pass (44 existing + 8 new AST tests), confirming the new pipeline, metric, and unwrap AST types are correctly implemented and integrated. The decision to add AST type validation tests alongside existing parser tests ensured the types work as expected before depending on them downstream.
+
+## 2. **Parser Architecture Handles Query Structure Sequentially**
+The parser successfully processes LogQL in order: selector → line filters → (next: pipeline stages). The current implementation stops at `|` when it's not a line filter operator (`|=`, `|~`), creating a clear insertion point for pipeline stage parsing. No refactoring needed—just extend the existing pattern.
+
+## 3. **Task Dependencies Enable Parallel Work**
+Task #2 completion unblocked Tasks #3 and #4 (pipeline/metric parsing). Task #3 is now ready to implement with the AST types in place, while Task #5 (Pipeline execution) can proceed independently in parallel, allowing efficient workflow progression.
+
+> id: 1fba9106-9bb0-44ad-9772-3027db7aa2e9
 
 # Key Insights
 
-## 1. **Dual Graph Navigation Strategy**
-The codebase maintains both **static module tree** (configuration structure) and **dynamic module graph** (runtime instances with count/for_each expansion). Two separate traversal methods (`Descendant` vs `DescendantForInstance`) were implemented to handle this distinction, where the latter ignores instance keys since all instances share the same config node.
+1. **Radix Tree Ownership Validation Pattern**
+   - *Decision*: Use `LongestPrefix()` to determine resource ownership before traversing tree branches
+   - *Problem*: Risk of walking into resources owned by other components, causing incorrect state management
+   - *Solution*: Check ownership at branch points (line 821-826) and skip prefixes owned by others using `SkipPrefix()` to avoid unnecessary traversal
 
-## 2. **Iterator Pattern Migration**
-The code shows evolution from callback-based traversal (`DeepEach` with callback function) to Go 1.22's iterator protocol (`AllModules` with `iter.Seq`). The new approach provides better early termination control and cleaner syntax, suggesting a modernization effort across the codebase.
+2. **Cache Invalidation via Pattern Matching**
+   - *Decision*: Compile cache buster matchers upfront from configuration, then apply them selectively
+   - *Problem*: Need to distinguish watched vs. unwatched files and avoid invalidating cache entries that shouldn't be evicted
+   - *Solution*: Filter paths by `Watch` flag (line 854), build matchers once (line 858), then drain matching identities separately (line 878) to prevent false invalidations in subsequent operations
 
-## 3. **Defensive Nil-Checking on Path Traversal**
-All traversal methods defensively check for `nil` children during path navigation and return `nil` gracefully rather than panicking. This handles cases where requested module paths don't exist in the tree, indicating the design prioritizes safe lookups over strict validation.
+3. **Hierarchical Prefix Walking with Early Termination**
+   - *Decision*: Use nested walkers (pageWalker → resourceWalker) with context-aware iteration
+   - *Problem*: Uncontrolled traversal of large tree structures causes performance issues
+   - *Solution*: Implement early termination via ownership checks and `SkipPrefix()` calls rather than processing all nodes
 
-> id: 97cf8267-640e-44a1-a046-a71751414291
-
-# Key Insights
-
-## 1. **Security Default Changed: Cookie Attributes Now Always Secure**
-**Problem:** The code was conditionally setting `Secure: true` and `SameSite: http.SameSiteNoneMode` only for HTTPS requests, leaving cookies insecure in non-HTTPS scenarios.
-
-**Solution:** Simplified the logic to always set these attributes by default, removing the conditional TLS/proxy protocol detection. This is a safer default posture that eliminates a potential security gap.
-
-## 2. **Test Expectations Updated to Match New Behavior**
-**Decision:** Updated the test assertion from expecting `Secure: false` for non-secure requests to expecting `Secure: true` by default. Also added an explicit test for `SameSite: http.SameSiteNoneMode`.
-
-**Impact:** Tests now validate the stricter security posture rather than the previous permissive behavior.
-
-## 3. **Configuration Parser Extended for TLS Certificate Signing**
-**Solution:** Added `sign_with_root` keyword support to the TLS directive parser, allowing internal CAs to sign certificates with the root certificate rather than intermediate certificates. Included an integration test demonstrating the Caddyfile syntax and expected JSON output configuration.
-
-> id: 084d6b19-1bed-4d79-9ae8-abf6de8e525f
+> id: 32cdfe3b-089f-4b69-9bd6-75281763a562
 
 
 ## Related Context (via graph)
-# Skill Description
-
-**Systematic Problem-Solving Through Specification-Driven Architecture**
-
-This pattern demonstrates the ability to diagnose and resolve complex technical problems by maintaining tight alignment between implementation code, comprehensive documentation, and rigorous testing. The skill involves:
-
-1. **Root Cause Analysis** - Identifying underlying architectural gaps (e.g., missing global ordering in pipeline queries, deadcode from incomplete refactoring, unreachable APIs)
-
-2. **Design-First Resolution** - Solving problems by establishing clear specifications (SPECS.md, NOTES.md) and interface contracts before implementation, ensuring consistency across multiple modules
-
-3. **Atomic Rollout Discipline** - Managing changes to foundational types/patterns by enforcing strict synchronization between specifications, code, stage implementations, and tests to avoid intermediate type mismatches
-
-4. **Infrastructure Reuse** - Solving new problems without new machinery by leveraging existing primitives (e.g., using existing sparse columns + bloom filters for body parsing, reusing `executor.NewColumnProvider` for metrics aggregation)
-
-5. **Quality-Gated Delivery** - Using pre-commit validation (linters, deadcode analysis, test coverage) as guardrails to ensure solutions are production-ready before merge
-
-The common thread: **solving problems through design clarity, comprehensive documentation, and methodical validation rather than ad-hoc coding**.
-
-> id: 4bbb4aee-1b09-4b81-9c99-b05f3998bf2e
-
-Yes — two mechanisms:
-
-**1. Block via PreToolUse hook**
-
-A `PreToolUse` hook can return `{"decision": "block", "reason": "..."}` to prevent the tool from executing entirely:
-
-```bash
-# In a hook script:
-jq -n '{"decision": "block", "reason": "Use lth read instead: ~/bin/lth read <filepath>"}'
-```
-
-Claude sees the block reason and has to find another way. You could use this to block `Read` and force agents to use `lth read` — though it would break any Read calls outside lth skills unless gated by `LTH_ACTIVE`.
-
-**2. Permissions in settings.json**
-
-The `permissions.allow` list controls which tools are available at all. Anything not in the allow list requires user approval. You can effectively forbid a tool by not including it:
-
-```json
-{
-  "permissions": {
-    "allow": ["Bash", "Edit", "Write"],
-    // Read not listed → always prompts for approval
-  }
-}
-```
-
-There's no explicit `deny` list — absence from `allow` means it requires confirmation rather than being hard-blocked.
-
-**For the lth read use case specifically:**
-
-The most effective approach would be a `PreToolUse` hook on `Read` that, when `LTH_ACTIVE=1`, blocks the native `Read` and returns the `lth read` output as `additionalContext` along with the block decision. The agent would see the file content + lth history in one shot without needing the file tool to succeed.
-
-But this gets complex — agents rely heavily on `Read` for things that have nothing to do with lth (reading their own plan.md, etc.). A blanket block would break the workflow. More surgical would be: block `Read` only for source files (`.go`, `.py`, etc.) when `LTH_ACTIVE=1`, pass through for `.md`, `.json`, config files. Want me to implement that?
-
-> id: 5e966b7b-d300-419c-a585-c27503c44be5
-
-# Concise Behavioral Rule
-
-**Test design assumptions against reality early and often; let integration failures guide simplification.**
-
-Or more tersely:
-
-**Find problems through building, not planning.**
-
----
-
-**Why this captures it**: The skill isn't about a specific technique (integration testing, incremental development) but the meta-pattern of *using real constraints discovered during assembly to drive design toward simplicity*. The rule explains why each phase worked:
-
-- Early integration caught the index-writer gap (assumption ≠ reality)
-- Real queries exposed the unreachable fast path (spec ≠ implementation)
-- Benchmarking revealed the 30% cost was unacceptable (theory ≠ constraints)
-- Each gap prompted simplification rather than workarounds
-
-This is fundamentally different from "design thoroughly first"—it's **"design enough to build, then let building teach you what actually matters."**
-
-> id: 9a885a05-1214-43a5-b3a9-bfcfea405343
-
 # Shared Skill: Systematic Problem Decomposition with Documentation-Driven Verification
 
 These memories demonstrate a consistent pattern of **breaking complex technical decisions into documented components, then verifying each component independently before integration**.
@@ -337,6 +289,45 @@ To handle the "needle in haystack" case where filtering is selective, add **KLL 
 
 > id: 117b2b12-d5a9-4a54-a7b4-f7507b00c28e
 
+sync.Pool cap-guard pattern: use *p = make(...) NOT p = &s in oversized branch — p=&s only rebinds local var, creates new heap allocation per release. Correct: *p = make([]int, 0, defaultCap); pool.Put(p). Also: nil all pointer fields before Put to prevent GC retention.
+
+> id: 6d33dcbd-2e00-4e8b-9b69-e15ca3889763
+
+# Key Insights Summary
+
+## 1. **Discovery Task Completed Successfully**
+The investigation into trace vs. log benchmark byte-tracking patterns was completed and documented. **Decision Made**: Log benchmarks can adopt the same pattern as trace benchmarks by exporting and wrapping `TrackingReaderProvider` from `internal/modules/rw/tracking.go`. This requires minimal changes (export + wrapping) with no modifications to query execution pipeline.
+
+## 2. **Codebase Architecture Understanding**
+Explored blockpack's execution pipeline structure:
+- **executor.go**: Owns block scanning and span-level predicate evaluation; uses `queryplanner` for block selection and `vm.Program` for query execution
+- **vm/traceql_compiler.go**: Compiles TraceQL filters into dual-purpose `Program` objects with both `ColumnPredicate` (fast bulk scanning) and `Instructions` (flexibility)
+- **executor/predicates.go**: Converts compiled programs to pruning predicates, with special handling for OR queries (bloom-only) vs. AND queries (range-aware)
+
+## 3. **Problem Encountered & Solution Pattern**
+The exploration revealed that blockpack uses a **two-level filtering strategy**: (1) block-level pruning via bloom filters and range indexes via `buildPredicates()`, and (2) span-level evaluation via `program.ColumnPredicate()`. This pattern works for both trace and log queries—log benchmarks just need the infrastructure layer (TrackingReaderProvider export) to measure bytes_read consistently.
+
+> id: 7e20f705-09da-45c2-a206-61b8855b725c
+
+# Key Insights Summary
+
+## 1. **LokiConverter Implementation Found; matchersToLogQL Does Not Exist**
+   - **Decision**: Located LokiConverter in `/benchmark/lokibench/converter.go` with three key methods: `LinesProcessed()`, `ResetLines()`, and `SelectLogs()`
+   - **Problem**: The `matchersToLogQL` function that was being searched for does not exist in the codebase
+   - **Solution**: LogQL conversion happens implicitly via `logSel.String()` and delegated to `blockpack.StreamLogQL()`. Actual matcher compilation is handled in `/internal/logqlparser/compile.go` which converts matchers to column predicates
+
+## 2. **Extensive Task Backlog Exists Across Multiple Technical Domains**
+   - **Problem**: 22 task files found covering complexity analysis, bug fixes, feature implementation, and infrastructure work across multiple modules (arena, blockio, executor, encodings, VM, etc.)
+   - **Decision**: Tasks span from low-level encoding complexity to high-level LogQL engine implementation and Docker infrastructure
+   - **Solution Needed**: Tasks are organized by domain (complexity-*.md) and by feature/fix area, but require detailed review of each file to assess priority, dependencies, and current progress status
+
+## 3. **Immediate Action Required: Read All .bob/tasks Files for Complete Backlog Assessment**
+   - The file listing shows 22 task files but their contents (status, completion progress, blockers) are unknown
+   - Need to read each file to determine: which tasks are blocked, which are in-progress, priority ordering, and inter-task dependencies
+   - This will reveal the actual development roadmap and resource allocation needs
+
+> id: 4bed2bd1-caab-492c-a6fa-af90d5e3e276
+
 
 ## Memory IDs (for exploration)
 Use these IDs to explore further:
@@ -344,23 +335,23 @@ Use these IDs to explore further:
   lth graph show --from <id>      — traverse graph edges
   lth graph ppr --seeds <id,...>  — personalized pagerank from seeds
 
-  9a8ca827-9182-4946-8c8a-8724b0c927d2
-  0378883f-f281-41e5-bb2f-d9d3c83925d2
-  268b07a4-12e0-44cb-9ffa-e9d26dcbc323
+  c121b38e-136d-4758-bf98-5c481e17d6d3
+  49dd6983-2cba-4b57-b75d-3e2bde5aaa05
+  5a1da579-468e-4b41-abf8-2f77da070b8f
+  eaa02943-9b77-4f28-92fd-3d0e31db92ef
   9d1de0d1-e4eb-47fd-81ea-36c226e77985
-  73d12154-7b7a-4517-9915-b4091bc3f9b9
-  56d72a15-2692-43f3-8ebc-a1b71ab516a2
-  88c2677e-efa5-4ad0-9ce3-58f257f0cce6
-  d65b7d07-5fb6-43f3-8f13-5a928105bc22
-  00f92d1b-ac20-4f92-a57d-1ddfbccf78dd
-  81548a28-77cb-49a4-bc34-263645c942ad
-  17667c34-8811-4eed-b5e2-fd3a10c02bb2
-  058f92b2-b7f9-4171-8195-6bc48ba3ee84
-  f421129f-0fe4-4940-a534-cc5ff950ebad
-  97cf8267-640e-44a1-a046-a71751414291
-  084d6b19-1bed-4d79-9ae8-abf6de8e525f
-  4bbb4aee-1b09-4b81-9c99-b05f3998bf2e
-  5e966b7b-d300-419c-a585-c27503c44be5
-  9a885a05-1214-43a5-b3a9-bfcfea405343
+  f4e418d7-af10-4154-b252-a9eb8fe5a7c9
+  e0e08e5c-d114-420b-a2b7-9ccbc6cb3466
+  6fcf6e66-7904-48df-9951-3073114ddc62
+  99e33d86-2293-44cd-935a-8129dd386088
+  5142dc47-cf98-4bcf-a451-13ac6d8b6fa2
+  316055a2-c30f-4ae8-9f8d-1c1cf83dd2bf
+  1cb21b68-d96e-446d-ada5-e155e520f1c6
+  f5909d1a-0316-4b87-b90d-2cabb24f5e49
+  1fba9106-9bb0-44ad-9772-3027db7aa2e9
+  32cdfe3b-089f-4b69-9bd6-75281763a562
   96f7888a-ebb8-4c6e-9a6d-3e1d26af052f
   117b2b12-d5a9-4a54-a7b4-f7507b00c28e
+  6d33dcbd-2e00-4e8b-9b69-e15ca3889763
+  7e20f705-09da-45c2-a206-61b8855b725c
+  4bed2bd1-caab-492c-a6fa-af90d5e3e276

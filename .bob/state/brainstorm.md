@@ -777,3 +777,617 @@ Hardest implementation parts (in order):
 4. Tier 3 LSP ops — require go/packages setup (defer)
 
 Ready for workflow-planner agent to create detailed implementation plan.
+
+---
+
+## 2026-05-20 - Task Received (Tier 2)
+
+Add 4 Tier 2 tools to the goast MCP server:
+1. ast_rename — rename identifier at declaration site + all references in same file
+2. ast_node_at — given file + line + col, return innermost node + its structural path
+3. ast_find_symbols — find declarations matching a name glob across a directory
+4. ast_find — structural search: find all nodes matching a partial node tree (absent fields = wildcards)
+
+Starting Tier 2 brainstorm...
+
+---
+
+## 2026-05-20 - Research Findings (Tier 2)
+
+### Codebase State
+
+Tier 1 is fully implemented. Key packages confirmed present and working:
+
+- `kinds/` — 50 bidirectional JSON ↔ go/ast node types, `MarshalNode(ast.Node) (json.RawMessage, error)` in `kinds/marshal.go`
+- `selector/selector.go` — `Navigate(file *ast.File, steps []PathStep) (ast.Node, ParentContext, error)` fully implemented with ~85 step kinds
+- `editor/editor.go` — `Edit(path, dryRun, fn)`, `ParseFile(path)` 
+- `meta/meta.go` — `Compute(fset, src, node, parent, depth) Meta`, `FileInfo(fset, src, file) Meta`
+- `ops/imports.go` — already uses `golang.org/x/tools/go/ast/astutil` (AddNamedImport, DeleteImport)
+- `ops/query.go` — canonical tool handler pattern: typed args struct, `toolError()`, `navError()`, `mcp.NewTypedToolHandler`
+- `ops/replace.go` — canonical edit pattern: `editor.Edit(path, dryRun, fn)`
+
+**`golang.org/x/tools v0.45.0`** is already in go.mod — `astutil.Apply` is available at no extra cost.
+
+### Tool Handler Pattern (from ops/query.go)
+
+```go
+type ASTXxxArgs struct {
+    File string `json:"file"`
+    Path json.RawMessage `json:"path"`
+    // ...
+}
+
+func HandleASTXxx(ctx context.Context, req mcp.CallToolRequest, args ASTXxxArgs) (*mcp.CallToolResult, error) {
+    f, fset, src, err := editor.ParseFile(args.File)
+    if err != nil {
+        return toolError(fmt.Sprintf("parse: %v", err)), nil
+    }
+    // ... work ...
+    b, _ := json.Marshal(result)
+    return mcp.NewToolResultText(string(b)), nil
+}
+```
+
+`toolError()` and `navError()` are defined in `ops/query.go` and accessible within the `ops` package.
+
+### editor.Edit Pattern (from ops/replace.go)
+
+For write operations:
+```go
+result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, fset *token.FileSet) error {
+    // mutate f ...
+    return nil
+})
+// result.Changed, result.Diff
+```
+
+### astutil.Apply Signature
+
+```go
+// golang.org/x/tools/go/ast/astutil
+func Apply(root ast.Node, pre, post ApplyFunc) ast.Node
+
+type ApplyFunc func(*Cursor) bool
+
+type Cursor struct { ... }
+func (c *Cursor) Node() ast.Node
+func (c *Cursor) Parent() ast.Node
+func (c *Cursor) Name() string   // structural field name in parent
+func (c *Cursor) Index() int     // -1 if not in a slice
+func (c *Cursor) Replace(n ast.Node)
+```
+
+`pre` returns false to stop descending into children. `post` runs after children.
+
+### path.Match for Glob Patterns
+
+`path.Match(pattern, name)` — standard library, supports `*` wildcard. For case-insensitive
+matching, both sides should be lowercased. This is suitable for `ast_find_symbols`.
+
+### os.ReadDir for Directory Walking
+
+```go
+entries, err := os.ReadDir(dir)
+for _, entry := range entries {
+    if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+        // parse this file
+    }
+}
+```
+
+Non-recursive by design — `ast_find_symbols` scope is single directory, not subtree.
+
+### token.FileSet Line/Offset Arithmetic
+
+For `ast_node_at`, converting line+col to byte offset:
+
+```go
+// After ParseFile returns fset:
+tokenFile := fset.File(f.Pos())  // *token.File for this file
+lineStart := tokenFile.LineStart(line)  // token.Pos of line start
+offset := fset.Position(lineStart).Offset + (col - 1)  // byte offset
+```
+
+Then find the innermost node containing that offset by walking the AST and checking
+`fset.Position(node.Pos()).Offset <= offset < fset.Position(node.End()).Offset`.
+
+**Caveat**: `tokenFile.LineStart(line)` panics if `line` is out of range. Must bounds-check
+against `tokenFile.LineCount()`.
+
+**Alternative**: Use `fset.Position(f.Pos()).Offset` as base, then compute directly from
+the source bytes. But LineStart is cleaner.
+
+### MarshalNode + JSON Field Comparison for ast_find
+
+The structural matching approach for `ast_find`:
+
+1. Caller provides a pattern as `json.RawMessage` (a partial JSON node tree).
+2. Walk the file AST with `astutil.Apply`.
+3. For each visited node, call `kinds.MarshalNode(node)` to get its JSON.
+4. Compare the pattern JSON against the actual JSON using recursive field matching:
+   - Parse both as `map[string]json.RawMessage`.
+   - For each key in pattern: if the key exists in actual AND both are non-null, recursively compare.
+   - If a pattern field is absent or `null` → wildcard (match anything).
+   - Primitive fields (strings, numbers, booleans) compared by value equality.
+
+This requires no knowledge of specific node schemas — it works generically via JSON.
+
+**Key insight**: `json.RawMessage` comparison can be done by unmarshaling both sides to
+`interface{}` and using `reflect.DeepEqual`. But a recursive map comparison is cleaner and
+avoids reflect.
+
+**Performance concern**: Calling `MarshalNode` on every visited node during a file walk is
+O(n * average_node_size). For typical Go files (1000 nodes), this is fast enough. No caching
+needed.
+
+### Path Reconstruction for ast_node_at
+
+The hard part of `ast_node_at` is building the `[]selector.PathStep` path from the file root
+down to the found node. Options:
+
+**Option A: Walk with parent tracking.**
+Do a manual AST walk using `ast.Inspect`, maintaining a stack of (node, pathStep) pairs.
+When the target node is found, return the accumulated path.
+
+```go
+type frame struct {
+    node ast.Node
+    step selector.PathStep
+}
+var stack []frame
+
+ast.Inspect(f, func(n ast.Node) bool {
+    if n == nil { stack = stack[:len(stack)-1]; return false }
+    if containsOffset(fset, n, offset) {
+        stack = append(stack, frame{n, stepFor(n, parent)})
+        return true
+    }
+    return false
+})
+```
+
+Problem: `ast.Inspect` does not provide parent context. Need to track it manually.
+
+**Option B: astutil.Apply with cursor.**
+`astutil.Apply` provides `c.Parent()` and `c.Name()` and `c.Index()`. This is exactly what's
+needed to build a PathStep for the current node relative to its parent.
+
+Walk pre-order. When a node's range contains the offset, it's a candidate. Track the deepest
+(most specific) candidate seen.
+
+**Option C: Recursive walk with path accumulation.**
+Write a recursive helper that walks the AST, tracking the current path. When the target node
+is found, return the accumulated path.
+
+**Chosen: Option C** — a recursive walk that builds path steps as it descends. This is the
+most controllable and easiest to reason about. The path-building logic mirrors the selector's
+step logic in reverse.
+
+However, building a full path from node-to-root is inherently tied to knowing the AST structure.
+The returned path does not need to be maximally specific — it needs to be sufficient for the
+selector to navigate back to the same node. So we can build a "summary path" that uses the
+selector's step vocabulary.
+
+**Practical approach**: Walk the AST keeping a parent map `map[ast.Node]ast.Node`. When the
+innermost target node is found, walk up the parent chain to reconstruct the path steps.
+
+```go
+// Build parent map
+parents := map[ast.Node]ast.Node{}
+ast.Inspect(f, func(n ast.Node) bool {
+    if n == nil { return false }
+    // For each child of n, record n as its parent
+    // (ast.Inspect doesn't give us children directly)
+    return true
+})
+```
+
+This doesn't work easily with `ast.Inspect` alone. Better to use `astutil.Apply` which gives
+`c.Parent()`.
+
+**Final approach for ast_node_at path reconstruction**:
+
+Walk with `astutil.Apply`, collect all (node, parent, name, index) tuples for nodes whose
+range contains the target offset. After the walk, find the deepest (smallest range) node.
+Then walk up through parents to build path steps. The parent lookup uses the tuples collected.
+
+This is O(n) in file nodes, which is fine.
+
+### Spec-Driven Modules in Scope (Tier 2)
+
+No spec-driven modules in scope. The `ops/` directory has no SPECS.md, NOTES.md, TESTS.md,
+BENCHMARKS.md, or CLAUDE.md. No constraints from spec-driven enforcement.
+
+---
+
+## 2026-05-20 - Approaches Considered (Tier 2)
+
+### ast_rename: Approach A — Walk and Rename All Matching Idents
+
+Use `astutil.Apply` to walk the entire file AST. For every `*ast.Ident` whose `.Name` equals
+`oldName`, call `c.Replace()` with a new `*ast.Ident{Name: newName}`.
+
+**Obtain oldName**: Use `selector.Navigate(f, path)` to reach the declaration node. Extract
+the name from there (e.g., `funcDecl.Name.Name`, `typeSpec.Name.Name`, etc.).
+
+**Approximation**: This renames ALL idents with the matching name in the file — including ones
+in different scopes (inner functions, nested type declarations). For the common case (renaming
+a top-level function or type), this is correct. For shadowed variable rename, it will
+over-rename. Document this limitation clearly in the tool description.
+
+**Pros**: Simple, ~30 lines, uses established astutil.Apply pattern already in ops/imports.go.
+**Cons**: Over-renames in shadow/scope scenarios.
+
+### ast_rename: Approach B — Scope-Aware Walk Using go/types
+
+Load the package with `go/types`, use `types.Info.Defs` and `types.Info.Uses` to find the
+exact object, then rename only idents that reference that exact object.
+
+**Pros**: Precise — no false renames.
+**Cons**: Requires go/types setup, go list invocation, 1-5s latency. Explicitly out of scope
+for Tier 2 per the task brief ("AST-only (no go/types)").
+
+**Decision**: Approach A. Document the approximation.
+
+---
+
+### ast_node_at: Approach A — astutil.Apply with Ancestor Tracking
+
+Walk the file with `astutil.Apply`. In the pre-function, if the current node's Pos..End range
+contains the target byte offset, record it (node, parent, field name, index). Track the
+"deepest" (narrowest range) match. After the walk, reverse-build the path.
+
+**Reverse path building**: Starting from the innermost node, use the recorded parent chain
+to emit PathStep objects. This requires mapping (parent type, field name, index) →
+`selector.PathStep`. This mapping mirrors `selector.go` but in reverse.
+
+**Pros**: Clean, uses cursor's parent info directly.
+**Cons**: Reverse-mapping (parent, fieldName, index) → PathStep vocabulary is non-trivial.
+         Not every AST node type has a corresponding selector step. Some intermediate nodes
+         (e.g., `*ast.FieldList`) are not addressable by the selector vocabulary.
+
+**Simplification**: Return a "best effort" path that stops at the first addressable ancestor.
+The returned path should be valid for use with `ast_query`/`ast_replace`. If the innermost
+node is inside a position not directly addressable by selector steps (e.g., inside a FieldList),
+return the path to the nearest addressable ancestor.
+
+### ast_node_at: Approach B — Walk and Return Node + Meta Only
+
+Don't attempt to reconstruct the full path. Instead:
+- Return the node's JSON (via MarshalNode), its meta (Compute), and the node's kind.
+- Let the caller use ast_query to re-fetch by a manually constructed path if they need it.
+
+**Pros**: Much simpler to implement — just find the innermost node, no path reconstruction.
+**Cons**: The design.md spec says "Returns the innermost node at that position, its full path,
+and its meta. The path can then be used directly with ast_query, ast_replace, etc."
+Path reconstruction is required by spec.
+
+**Decision**: Approach A, with the simplification of returning the path to the nearest
+fully addressable ancestor node.
+
+The path reconstruction needs a reverse-map function:
+```go
+func nodeToPathStep(node ast.Node, parent ast.Node, fieldName string, index int) (selector.PathStep, bool)
+```
+That returns a PathStep and whether the step is representable in selector vocabulary.
+
+This function covers the main cases:
+- `*ast.FuncDecl` in `*ast.File` → `{Kind: "FuncDecl", Name: fd.Name.Name}`
+- `*ast.GenDecl` in `*ast.File` based on Tok → `{Kind: "ImportDecl"}` etc.
+- `*ast.IfStmt` in `*ast.BlockStmt` with index → `{Kind: "IfStmt", Index: &idx}`
+- `*ast.BlockStmt` as FuncDecl.Body → `{Kind: "Body"}`
+- etc.
+
+This is ~100-150 lines of type-switch code.
+
+---
+
+### ast_find_symbols: Approach A — ReadDir + Parse + Scan Decls
+
+```
+1. os.ReadDir(dir) — non-recursive
+2. For each .go file: editor.ParseFile → *ast.File
+3. Walk f.Decls:
+   - *ast.FuncDecl: check name vs glob, check kinds filter
+   - *ast.GenDecl: iterate specs, check names vs glob
+4. Build {file, path, kind, name, recv, meta} per match
+```
+
+Glob matching: `path.Match(query, name)` for case-sensitive; lowercase both for
+case-insensitive.
+
+**Path field in result**: The selector path to navigate back to this declaration. For a
+FuncDecl named "Foo": `[{kind: "FuncDecl", name: "Foo"}]`. For a TypeSpec named "Bar":
+`[{kind: "TypeSpec", name: "Bar"}]`.
+
+**Pros**: Simple, fast, no dependencies beyond stdlib.
+**Cons**: None significant. This is straightforward.
+
+---
+
+### ast_find: Approach A — MarshalNode + JSON Field Comparison (Recommended)
+
+```
+1. Unmarshal pattern from json.RawMessage → map[string]json.RawMessage
+2. Walk file with astutil.Apply
+3. For each node: kinds.MarshalNode(node) → json.RawMessage
+4. Unmarshal actual as map[string]json.RawMessage
+5. matchPattern(patternMap, actualMap) recursive:
+   - For each key in patternMap:
+     - If key == "kind": must match exactly
+     - If patternMap[key] is null or missing: wildcard (skip)
+     - If both are objects: recurse
+     - If primitive: compare JSON bytes (or unmarshal to interface{} and compare)
+6. Collect matching nodes with path + meta
+```
+
+**Path for matched nodes**: Same problem as ast_node_at — need to know position in tree.
+Use the same parent-tracking approach: record (node, parent, fieldName, index) during the walk,
+then build path steps for matched nodes.
+
+**Alternative for path**: Since ast_find is a search, we can return the meta (which includes
+line/col/offset) and let the caller use ast_node_at to get the path if needed. But the spec
+says to return `{ path, node, meta }` — path is required.
+
+**Practical shortcut for ast_find path**: Since ast_find returns top-level or nested matches,
+and the most common use case is finding top-level patterns (IfStmt in function body, CallExpr
+anywhere), we can build path steps for well-known ancestor types and stop at the first
+addressable node. This reuses the same path reconstruction logic from ast_node_at.
+
+### ast_find: Approach B — Compile Pattern to Predicate
+
+Parse the pattern JSON into a Node struct (via kinds.UnmarshalNode), then use the Node's
+typed fields for matching rather than raw JSON comparison.
+
+**Pros**: Cleaner matching logic — typed fields make null vs absent unambiguous.
+**Cons**: The Node structs store children as `json.RawMessage`, so comparison would still
+require JSON parsing of children. The recursion is essentially the same as Approach A.
+Additionally, this only works for patterns where the root kind is known. Approach A's generic
+JSON comparison is more flexible and simpler to implement.
+
+**Decision**: Approach A for ast_find. Generic JSON field comparison is the right abstraction.
+
+---
+
+## 2026-05-20 - Recommendation (Tier 2)
+
+### Chosen Approaches
+
+**ast_rename**: Approach A — astutil.Apply walk, rename all `*ast.Ident` matching oldName.
+Obtain oldName from selector.Navigate + extract from declaration node. Document approximation.
+
+**ast_node_at**: Approach A — astutil.Apply walk collecting (node, parent, field, index) tuples
+for all nodes whose range contains the target offset. Find innermost, reconstruct path using a
+`nodeToPathStep` reverse-mapper. Return path to nearest fully-addressable ancestor.
+
+**ast_find_symbols**: Approach A — os.ReadDir + parse each .go file + scan f.Decls + glob match.
+Case-insensitive matching by lowercasing both pattern and name.
+
+**ast_find**: Approach A — generic JSON map comparison. astutil.Apply walk, MarshalNode each
+node, recursive pattern match via map[string]json.RawMessage comparison.
+
+---
+
+### Implementation Strategy
+
+#### File: `ops/rename.go`
+
+```go
+// ASTRenameArgs
+type ASTRenameArgs struct {
+    File   string          `json:"file"`
+    Path   json.RawMessage `json:"path"`   // path to declaration site
+    To     string          `json:"to"`
+    DryRun bool            `json:"dry_run"`
+}
+
+func HandleASTRename(ctx, req, args) (*mcp.CallToolResult, error) {
+    // 1. Parse file
+    // 2. Navigate to declaration node to extract oldName
+    //    - FuncDecl: fd.Name.Name
+    //    - TypeSpec: ts.Name.Name
+    //    - ValueSpec: vs.Names[0].Name (first name)
+    //    - Field: field.Names[0].Name
+    //    - Ident directly: id.Name
+    // 3. editor.Edit: astutil.Apply, replace all *ast.Ident{Name==oldName}
+    //    with *ast.Ident{Name: args.To}
+    //    NOTE: also rename the declaration ident itself
+    // 4. Return diff
+}
+```
+
+**Rename of declaration ident**: The declaration node's own Ident (e.g., `funcDecl.Name`)
+must also be renamed. Since we rename ALL matching Idents including that one, it's handled
+automatically — no special case needed.
+
+**Key subtlety**: For `selector.Navigate` to work, the file must be parsed fresh in `Edit`.
+Navigate the parsed-in-edit file, not the pre-edit file. The pattern in ops/replace.go:
+navigate inside the `editor.Edit` callback.
+
+#### File: `ops/lsp.go`
+
+Three handlers in one file:
+
+**HandleASTNodeAt**:
+```go
+type ASTNodeAtArgs struct {
+    File string `json:"file"`
+    Line int    `json:"line"`
+    Col  int    `json:"col"`   // 1-based column
+}
+
+// Response:
+type ASTNodeAtResponse struct {
+    Path []selector.PathStep `json:"path"`
+    Node json.RawMessage     `json:"node"`
+    Meta meta.Meta           `json:"meta"`
+}
+```
+
+Implementation:
+1. ParseFile → f, fset, src
+2. `tokenFile := fset.File(f.Pos())`; bounds-check line vs `tokenFile.LineCount()`
+3. `lineStart := tokenFile.LineStart(line)`; `targetOffset := fset.Position(lineStart).Offset + (col - 1)`
+4. Walk AST with astutil.Apply, collect `nodeInfo{node, parent, fieldName, index}` for all
+   nodes where `fset.Position(n.Pos()).Offset <= targetOffset < fset.Position(n.End()).Offset`.
+   Track innermost (smallest End-Pos range).
+5. From innermost node, walk up through collected nodeInfo chain building PathSteps.
+6. MarshalNode the innermost node, Compute meta.
+
+**HandleASTFindSymbols**:
+```go
+type ASTFindSymbolsArgs struct {
+    Dir   string   `json:"dir"`
+    Query string   `json:"query"`           // glob pattern, e.g. "Handle*"
+    Kinds []string `json:"kinds,omitempty"` // filter by kind: FuncDecl, TypeSpec, etc.
+}
+
+type SymbolMatch struct {
+    File string              `json:"file"`
+    Path []selector.PathStep `json:"path"`
+    Kind string              `json:"kind"`
+    Name string              `json:"name"`
+    Recv string              `json:"recv,omitempty"`
+    Meta meta.Meta           `json:"meta"`
+}
+```
+
+Implementation:
+1. os.ReadDir(args.Dir)
+2. For each .go file: editor.ParseFile
+3. Walk f.Decls:
+   - FuncDecl: name = fd.Name.Name, recv = recvTypeString(...)
+   - GenDecl type: each TypeSpec.Name.Name
+   - GenDecl var/const: each ValueSpec.Names
+4. `path.Match(strings.ToLower(query), strings.ToLower(name))`
+5. Filter by args.Kinds if non-empty
+6. Build path: `[]selector.PathStep{{Kind: "FuncDecl", Name: name}}` etc.
+7. meta = meta.Compute(fset, src, node, nil, 1)
+
+**HandleASTFind**:
+```go
+type ASTFindArgs struct {
+    File    string          `json:"file"`
+    Dir     string          `json:"dir,omitempty"`
+    Pattern json.RawMessage `json:"pattern"` // partial node tree
+}
+
+type FindMatch struct {
+    Path []selector.PathStep `json:"path"`
+    Node json.RawMessage     `json:"node"`
+    Meta meta.Meta           `json:"meta"`
+}
+```
+
+Implementation (single file, scope="file" default):
+1. ParseFile
+2. Unmarshal pattern to `map[string]json.RawMessage`
+3. astutil.Apply walk, collecting (node, parent, fieldName, index)
+4. For each node: kinds.MarshalNode → unmarshal to map → matchPattern(patternMap, actualMap)
+5. On match: build PathSteps from ancestor chain, MarshalNode, Compute meta
+6. Collect all matches, return sorted by source order
+
+For `dir` scope: iterate .go files in dir, run per-file, aggregate results.
+
+#### File: server.go (additions)
+
+Register 4 new tools:
+- `ast_rename` with file, path, to, dry_run
+- `ast_node_at` with file, line, col
+- `ast_find_symbols` with dir, query, kinds (optional array)
+- `ast_find` with file (or dir), pattern (object)
+
+---
+
+### Key Implementation Decisions
+
+**Decision 1: ast_rename extracts oldName inside editor.Edit callback.**
+Navigate the freshly-parsed AST (inside the edit fn), not a pre-parsed one. This avoids
+any position-invalidation issues from re-parsing.
+
+**Decision 2: ast_find uses generic JSON map comparison, not typed Node comparison.**
+No need to know node-type-specific field semantics. Works for all 50 kinds uniformly.
+Null pattern fields vs absent pattern fields are both treated as wildcards.
+
+**Decision 3: ast_node_at path reconstruction stops at selector-vocabulary boundary.**
+If the innermost node is not directly addressable by the selector (e.g., it's inside a
+FieldList or a position marker), return the nearest addressable ancestor and note the
+limitation in the response. This is better than returning an invalid path.
+
+**Decision 4: ast_find_symbols uses path.Match for glob, lowercase for case-insensitivity.**
+Standard library, zero dependencies. `"*"` matches any sequence of non-separator characters.
+For symbols, there are no path separators, so `*` matches any substring effectively.
+
+**Decision 5: For ast_find with dir scope, process files sequentially.**
+No goroutines. Sequential is simpler, sufficient for typical directory sizes (< 50 files).
+
+**Decision 6: Reuse the same nodeInfoChain approach for both ast_node_at and ast_find.**
+Both need to reconstruct a path from a found node back to the file root. Extract a shared
+`buildPath(ancestors []nodeAncestor) []selector.PathStep` helper.
+
+---
+
+### Risks and Mitigations
+
+**Risk 1: ast_node_at path reconstruction is complex.**
+The nodeToPathStep reverse-mapper needs ~150 lines of type-switch coverage. Missing cases
+return empty path rather than panicking. Test with diverse node types in ops_test.go.
+
+**Risk 2: ast_rename over-renames in shadow scenarios.**
+Document explicitly: "AST-only rename — renames all identifiers with the same name in the
+file regardless of scope. Use go/types-based rename (Tier 3) for precise cross-scope rename."
+
+**Risk 3: ast_find performance on large files.**
+MarshalNode on every node in a 5000-line file could be slow. Profiling baseline: a typical
+Go file has ~2000-5000 AST nodes; MarshalNode is ~10µs per node → ~20-50ms total. Acceptable.
+If too slow, add a pre-filter on node Kind before MarshalNode (cheapest check: node type
+assertion matches the pattern's kind field).
+
+**Risk 4: ast_find_symbols ReadDir on large directories.**
+ReadDir is O(files). Parsing each .go file adds ~1ms per file. For 100 files → 100ms.
+Acceptable. No parallel parsing needed for typical directories.
+
+**Risk 5: tokenFile.LineStart panics on out-of-range line.**
+Bounds-check: `if line < 1 || line > tokenFile.LineCount() { return toolError(...) }`.
+Also check col bounds (1 to line length).
+
+---
+
+### Open Questions
+
+1. **ast_find pattern matching: should array fields require same-length match or allow
+   subset matching?** E.g., if pattern has `"args": [{"kind":"Ident","name":"x"}]` — does
+   this match a CallExpr with 3 args where the first is `x`? Or only a CallExpr with exactly
+   1 arg named `x`? Recommendation: require exact array length match for simplicity. Wildcard
+   = absent field, not a subset-match array. Document this.
+
+2. **ast_find_symbols case sensitivity**: Recommendation: case-insensitive by default (lowercase
+   both sides). The query `"Handle*"` should match `"handleRequest"` and `"HandleResponse"`.
+
+3. **ast_node_at col is 1-based or 0-based?** Convention in editors is 1-based. The meta
+   package uses 1-based (`pos.Column`). Use 1-based throughout, subtract 1 when computing
+   byte offset: `targetOffset = fset.Position(lineStart).Offset + (col - 1)`.
+
+---
+
+## 2026-05-20 - BRAINSTORM COMPLETE
+
+**Status:** Complete
+**Recommendation:** Four tools in two files (ops/rename.go, ops/lsp.go):
+  - ast_rename: astutil.Apply walk, rename all Ident nodes matching oldName (AST approximation)
+  - ast_node_at: LineStart+col byte offset, innermost node walk, path reverse-reconstruction
+  - ast_find_symbols: os.ReadDir + parse + scan f.Decls + path.Match glob
+  - ast_find: astutil.Apply + MarshalNode + recursive JSON map comparison (absent=wildcard)
+**Next Phase:** PLAN
+
+Key technical decisions for the implementer:
+1. ast_rename extracts oldName via selector.Navigate inside editor.Edit callback (fresh parse)
+2. ast_rename renames ALL *ast.Ident with matching name — document scope approximation
+3. ast_node_at uses token.FileSet.File(f.Pos()).LineStart(line) for line→offset; bounds-check first
+4. ast_node_at path reconstruction: collect (node, parent, fieldName, index) with astutil.Apply,
+   then reverse-walk to build []selector.PathStep using a nodeToPathStep mapper
+5. ast_find uses generic map[string]json.RawMessage comparison — no node-type-specific logic
+6. ast_find array fields require exact-length match (not subset); absent field = wildcard
+7. ast_find_symbols: path.Match + lowercase both sides for case-insensitive glob
+8. Shared path reconstruction helper reused by ast_node_at and ast_find
+9. Register all 4 tools in server.go

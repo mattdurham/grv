@@ -167,4 +167,51 @@ func RegisterTools(s *server.MCPServer) {
 		),
 		mcp.NewTypedToolHandler(ops.HandleGoModDropReplace),
 	)
+
+	// Tier 2 tools
+
+	// ast_rename — rename an identifier within a file
+	s.AddTool(
+		mcp.NewTool("ast_rename",
+			mcp.WithDescription("Rename an identifier at its declaration site and update all references within the same file. AST-only approximation — renames all identifiers with the given name in the file regardless of scope. Accurate for top-level declarations; may over-rename shadowed variables."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the Go source file")),
+			mcp.WithArray("path", mcp.Required(), mcp.Description("Selector path to the declaration site of the identifier to rename")),
+			mcp.WithString("to", mcp.Required(), mcp.Description("New identifier name")),
+			mcp.WithBoolean("dry_run", mcp.Description("If true, return diff without writing to disk")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTRename),
+	)
+
+	// ast_node_at — return the node at a file position
+	s.AddTool(
+		mcp.NewTool("ast_node_at",
+			mcp.WithDescription("Given a file position (line + column, 1-based), return the innermost AST node at that position, its structural path from the file root, and metadata. The path can be used directly with ast_query, ast_replace, etc."),
+			mcp.WithString("file", mcp.Required(), mcp.Description("Absolute path to the Go source file")),
+			mcp.WithInteger("line", mcp.Required(), mcp.Description("Line number (1-based)")),
+			mcp.WithInteger("col", mcp.Required(), mcp.Description("Column number (1-based)")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTNodeAt),
+	)
+
+	// ast_find_symbols — search declarations by name glob across a directory
+	s.AddTool(
+		mcp.NewTool("ast_find_symbols",
+			mcp.WithDescription("Search for declarations matching a name glob pattern across all .go files in a directory (non-recursive). Pattern supports * wildcard and is case-insensitive. Returns array of {file, path, kind, name, recv, line, meta}."),
+			mcp.WithString("dir", mcp.Required(), mcp.Description("Directory to search (non-recursive)")),
+			mcp.WithString("query", mcp.Required(), mcp.Description("Glob pattern for symbol name, e.g. \"Handle*\", \"*\", \"Get\"")),
+			mcp.WithArray("kinds", mcp.Description("Optional filter by kind: [\"FuncDecl\", \"TypeSpec\", \"VarSpec\", \"ConstSpec\"]. Omit for all.")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTFindSymbols),
+	)
+
+	// ast_find — structural pattern search within a file or directory
+	s.AddTool(
+		mcp.NewTool("ast_find",
+			mcp.WithDescription("Structural search: find all AST nodes matching a partial node tree pattern. Absent or null fields are wildcards. Present fields must match exactly. Array fields require exact-length match. Provide file for single-file search or dir for directory-wide search. Returns array of {file, path, node, source, meta}."),
+			mcp.WithString("file", mcp.Description("Absolute path to a single Go source file")),
+			mcp.WithString("dir", mcp.Description("Directory to search all .go files (non-recursive)")),
+			mcp.WithObject("pattern", mcp.Required(), mcp.Description("Partial node tree. Absent/null fields are wildcards. Example: {\"kind\":\"IfStmt\"} finds all if statements.")),
+		),
+		mcp.NewTypedToolHandler(ops.HandleASTFind),
+	)
 }

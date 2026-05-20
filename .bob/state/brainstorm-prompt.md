@@ -1,34 +1,31 @@
-# Brainstorm: goast MCP Server
+# Tier 2: goast LSP-style Operations
 
 ## Task
-Build the goast MCP server as designed in design.md — a Go MCP server that exposes Go AST read/write operations to Claude via structured JSON node trees. No raw text editing, no line numbers, no snippets. Fully bidirectional JSON ↔ go/ast.
+Add 4 Tier 2 tools to the goast MCP server:
+1. ast_rename — rename identifier at declaration site + all references in same file
+2. ast_node_at — given file + line + col, return innermost node + its structural path
+3. ast_find_symbols — find declarations matching a name glob across a directory
+4. ast_find — structural search: find all nodes matching a partial node tree (absent fields = wildcards)
 
-## Requirements
-- MCP server in Go, stdio transport
-- 50 node kinds (expressions, statements, declarations, specs, types) each with ToAST/FromAST
-- JSON path selector system for navigating to nodes within files
-- Read tools: ast_list, ast_query, ast_query_many, ast_meta
-- Write tools: ast_insert, ast_replace, ast_delete, ast_rename
-- Import tools: ast_add_import, ast_delete_import, ast_list_imports
-- go.mod tools: gomod_read, gomod_require, gomod_drop_require, gomod_replace, gomod_drop_replace
-- LSP-style tools: ast_node_at, ast_find_refs, ast_find_def, ast_find_impls, ast_find_symbols, ast_find
-- Refactoring tools: ast_extract_func, ast_inline_func
-- Metadata system: derived meta per node kind (position, complexity, exported, etc)
-- Metadata hooks: subprocess hooks that contribute key-value pairs to meta (git, blame, bugginess)
-- One struct per file under kinds/ with namespace comment headers
-- Atomic writes (temp + rename), parse-on-every-call, dry_run support
+## Existing codebase
+- kinds/ — 50 bidirectional JSON ↔ go/ast node types
+- selector/ — Navigate(file, path) → (ast.Node, ParentContext, error)
+- editor/ — parse/edit/format/write cycle
+- meta/ — derived node metadata
+- ops/ — 15 Tier 1 tools (query, insert, replace, delete, imports, gomod)
+- server.go — RegisterTools()
 
-## Key Design File
-/home/matt/source/goast-worktrees/goast-mcp-server/design.md
+## Design spec
+See design.md "LSP-style Operations" section for full specs.
 
-## Constraints
-- Pure Go, no CGO
-- stdlib go/ast + go/parser + go/format + go/types
-- golang.org/x/mod/modfile for go.mod
-- golang.org/x/tools/go/ast/astutil for node replacement
-- MCP via stdio (mark3labs/mcp-go or similar)
-- No in-memory state between calls
-- Atomic file writes
+## Key constraints
+- ast_rename: AST-only (no go/types). Walk file with astutil.Apply, rename all *ast.Ident with matching name. Document approximation (may rename unrelated idents of same name in different scopes).
+- ast_node_at: Parse file, compute byte offset from line+col (using token.FileSet), walk AST to find innermost node at that position, reverse-build path from file root to that node.
+- ast_find_symbols: Walk .go files in a dir, parse each, scan top-level decls, match name against glob pattern. Return {file, path, kind, name, recv, meta} per match.
+- ast_find: Structural search — walk AST with astutil.Apply, MarshalNode each node, compare against pattern using recursive field matching where absent pattern fields are wildcards. Return array of {path, node, meta}.
 
-## Spec-driven modules
-None yet — this is a greenfield project.
+## All tools: scope parameter
+"file" (default), "dir" (all .go files in dir, non-recursive), "package" (via go list — Tier 3, skip for now)
+
+## Register in server.go
+4 new tools: ast_rename, ast_node_at, ast_find_symbols, ast_find
