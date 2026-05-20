@@ -542,3 +542,241 @@ func TestUnmarshalNode_UnknownKind(t *testing.T) {
 		t.Fatal("expected error for unknown kind, got nil")
 	}
 }
+
+// TokenFromString coverage: exercise every arm via ToAST on nodes that use tokenFromString.
+
+func TestTokenFromString_BinaryOps(t *testing.T) {
+	ops := []string{"-", "*", "/", "%", "&", "|", "^", "<<", ">>", "&^", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
+	for _, op := range ops {
+		x := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "a"})
+		y := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "b"})
+		node := &kinds.BinaryExpr{KindField: "BinaryExpr", X: x, Op: op, Y: y}
+		_, err := node.ToAST()
+		if err != nil {
+			t.Errorf("op %q: unexpected error: %v", op, err)
+		}
+	}
+}
+
+func TestTokenFromString_UnaryOps(t *testing.T) {
+	// Unary: !, <-  (+ and - already covered by BinaryExpr)
+	unaryOps := []string{"!", "<-", "+", "-", "^", "*", "&"}
+	for _, op := range unaryOps {
+		x := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "x"})
+		node := &kinds.UnaryExpr{KindField: "UnaryExpr", Op: op, X: x}
+		_, err := node.ToAST()
+		if err != nil {
+			t.Errorf("unary op %q: unexpected error: %v", op, err)
+		}
+	}
+}
+
+func TestTokenFromString_AssignOps(t *testing.T) {
+	assignOps := []string{"=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "&^="}
+	for _, op := range assignOps {
+		lhs := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "x"})
+		rhs := mustMarshal(&kinds.BasicLit{KindField: "BasicLit", Tok: "INT", Value: "1"})
+		node := &kinds.AssignStmt{
+			KindField: "AssignStmt",
+			Lhs:       []json.RawMessage{lhs},
+			Tok:       op,
+			Rhs:       []json.RawMessage{rhs},
+		}
+		_, err := node.ToAST()
+		if err != nil {
+			t.Errorf("assign op %q: unexpected error: %v", op, err)
+		}
+	}
+}
+
+func TestTokenFromString_IncDec(t *testing.T) {
+	// ++ and -- via IncDecStmt
+	for _, tok := range []string{"++", "--"} {
+		x := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "i"})
+		node := &kinds.IncDecStmt{KindField: "IncDecStmt", X: x, Tok: tok}
+		_, err := node.ToAST()
+		if err != nil {
+			t.Errorf("tok %q: unexpected error: %v", tok, err)
+		}
+	}
+}
+
+func TestTokenFromString_IllegalDefault(t *testing.T) {
+	// AssignStmt with unknown tok triggers the ILLEGAL default path → error
+	lhs := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "x"})
+	rhs := mustMarshal(&kinds.BasicLit{KindField: "BasicLit", Tok: "INT", Value: "1"})
+	node := &kinds.AssignStmt{
+		KindField: "AssignStmt",
+		Lhs:       []json.RawMessage{lhs},
+		Tok:       "INVALID_OP",
+		Rhs:       []json.RawMessage{rhs},
+	}
+	_, err := node.ToAST()
+	if err == nil {
+		t.Error("expected error for unknown tok, got nil")
+	}
+}
+
+// ToAST error propagation tests
+
+func TestToAST_BinaryExpr_InvalidChild(t *testing.T) {
+	bad := json.RawMessage(`{"kind":"BadKind"}`)
+	good := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "b"})
+	node := &kinds.BinaryExpr{KindField: "BinaryExpr", X: bad, Op: "+", Y: good}
+	_, err := node.ToAST()
+	if err == nil {
+		t.Error("expected error for invalid child, got nil")
+	}
+}
+
+func TestToAST_BinaryExpr_InvalidY(t *testing.T) {
+	good := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "a"})
+	bad := json.RawMessage(`{"kind":"BadKind"}`)
+	node := &kinds.BinaryExpr{KindField: "BinaryExpr", X: good, Op: "+", Y: bad}
+	_, err := node.ToAST()
+	if err == nil {
+		t.Error("expected error for invalid Y child, got nil")
+	}
+}
+
+func TestToAST_BlockStmt_InvalidItem(t *testing.T) {
+	bad := json.RawMessage(`{"kind":"BadKind"}`)
+	node := &kinds.BlockStmt{KindField: "BlockStmt", List: []json.RawMessage{bad}}
+	_, err := node.ToAST()
+	if err == nil {
+		t.Error("expected error for invalid block item, got nil")
+	}
+}
+
+func TestNewNode_KnownAndUnknown(t *testing.T) {
+	n := kinds.NewNode("Ident")
+	if n == nil {
+		t.Error("expected non-nil node for 'Ident'")
+	}
+	n2 := kinds.NewNode("NoSuchKind")
+	if n2 != nil {
+		t.Error("expected nil for unknown kind")
+	}
+}
+
+func TestKind_Methods(t *testing.T) {
+	// Call Kind() on each registered node type to exercise the 0% Kind() methods.
+	knownKinds := []string{
+		"Ident", "BasicLit", "Ellipsis", "FuncLit", "CompositeLit", "ParenExpr",
+		"SelectorExpr", "IndexExpr", "IndexListExpr", "SliceExpr", "TypeAssertExpr",
+		"CallExpr", "StarExpr", "UnaryExpr", "BinaryExpr", "KeyValueExpr",
+		"ArrayType", "StructType", "FuncType", "InterfaceType", "MapType", "ChanType",
+		"Field",
+		"BadStmt", "DeclStmt", "EmptyStmt", "LabeledStmt", "ExprStmt", "SendStmt",
+		"IncDecStmt", "AssignStmt", "GoStmt", "DeferStmt", "ReturnStmt", "BranchStmt",
+		"BlockStmt", "IfStmt", "CaseClause", "SwitchStmt", "TypeSwitchStmt",
+		"CommClause", "SelectStmt", "ForStmt", "RangeStmt",
+		"ImportDecl", "ConstDecl", "TypeDecl", "VarDecl", "FuncDecl",
+		"ImportSpec", "ValueSpec", "TypeSpec",
+	}
+	for _, k := range knownKinds {
+		n := kinds.NewNode(k)
+		if n == nil {
+			// not every kind may be registered; skip silently
+			continue
+		}
+		got := n.Kind()
+		if got != k {
+			t.Errorf("NewNode(%q).Kind() = %q, want %q", k, got, k)
+		}
+	}
+}
+
+func TestTokKindFromString_AllLiterals(t *testing.T) {
+	// IMAG and CHAR are not exercised by other tests
+	imag := &kinds.BasicLit{KindField: "BasicLit", Tok: "IMAG", Value: "1i"}
+	_, err := imag.ToAST()
+	if err != nil {
+		t.Errorf("IMAG: unexpected error: %v", err)
+	}
+
+	char := &kinds.BasicLit{KindField: "BasicLit", Tok: "CHAR", Value: "'a'"}
+	_, err = char.ToAST()
+	if err != nil {
+		t.Errorf("CHAR: unexpected error: %v", err)
+	}
+}
+
+func TestTokKindFromString_Unknown(t *testing.T) {
+	bad := &kinds.BasicLit{KindField: "BasicLit", Tok: "UNKNOWN_LIT", Value: "x"}
+	_, err := bad.ToAST()
+	if err == nil {
+		t.Error("expected error for unknown token kind")
+	}
+}
+
+func TestRoundTrip_ForStmt_WithInitCondPost(t *testing.T) {
+	// ForStmt with init, cond, and post set
+	init := mustMarshal(&kinds.AssignStmt{
+		KindField: "AssignStmt",
+		Lhs:       []json.RawMessage{mustMarshal(&kinds.Ident{KindField: "Ident", Name: "i"})},
+		Tok:       ":=",
+		Rhs:       []json.RawMessage{mustMarshal(&kinds.BasicLit{KindField: "BasicLit", Tok: "INT", Value: "0"})},
+	})
+	cond := mustMarshal(&kinds.BinaryExpr{
+		KindField: "BinaryExpr",
+		X:         mustMarshal(&kinds.Ident{KindField: "Ident", Name: "i"}),
+		Op:        "<",
+		Y:         mustMarshal(&kinds.BasicLit{KindField: "BasicLit", Tok: "INT", Value: "10"}),
+	})
+	post := mustMarshal(&kinds.IncDecStmt{
+		KindField: "IncDecStmt",
+		X:         mustMarshal(&kinds.Ident{KindField: "Ident", Name: "i"}),
+		Tok:       "++",
+	})
+	body := mustMarshal(&kinds.BlockStmt{KindField: "BlockStmt", List: []json.RawMessage{}})
+	roundTripJSON(t, &kinds.ForStmt{
+		KindField: "ForStmt",
+		Init:      init,
+		Cond:      cond,
+		Post:      post,
+		Body:      body,
+	}, "ForStmt")
+}
+
+func TestRoundTrip_IfStmt_WithInit(t *testing.T) {
+	// IfStmt with init statement
+	init := mustMarshal(&kinds.AssignStmt{
+		KindField: "AssignStmt",
+		Lhs:       []json.RawMessage{mustMarshal(&kinds.Ident{KindField: "Ident", Name: "err"})},
+		Tok:       ":=",
+		Rhs:       []json.RawMessage{mustMarshal(&kinds.Ident{KindField: "Ident", Name: "nil"})},
+	})
+	cond := mustMarshal(&kinds.BinaryExpr{
+		KindField: "BinaryExpr",
+		X:         mustMarshal(&kinds.Ident{KindField: "Ident", Name: "err"}),
+		Op:        "!=",
+		Y:         mustMarshal(&kinds.Ident{KindField: "Ident", Name: "nil"}),
+	})
+	body := mustMarshal(&kinds.BlockStmt{KindField: "BlockStmt", List: []json.RawMessage{}})
+	roundTripJSON(t, &kinds.IfStmt{
+		KindField: "IfStmt",
+		Init:      init,
+		Cond:      cond,
+		Body:      body,
+	}, "IfStmt")
+}
+
+func TestRoundTrip_CommClause_WithComm(t *testing.T) {
+	// CommClause with a receive comm statement
+	ch := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "ch"})
+	recv := mustMarshal(&kinds.UnaryExpr{KindField: "UnaryExpr", Op: "<-", X: ch})
+	exprStmt := mustMarshal(&kinds.ExprStmt{KindField: "ExprStmt", X: recv})
+	body := []json.RawMessage{}
+	roundTripJSON(t, &kinds.CommClause{KindField: "CommClause", Comm: exprStmt, Body: body}, "CommClause")
+}
+
+func TestToAST_IfStmt_InvalidCond(t *testing.T) {
+	bad := json.RawMessage(`{"kind":"BadKind"}`)
+	body := mustMarshal(&kinds.BlockStmt{KindField: "BlockStmt", List: []json.RawMessage{}})
+	node := &kinds.IfStmt{KindField: "IfStmt", Cond: bad, Body: body}
+	_, err := node.ToAST()
+	if err == nil {
+		t.Error("expected error for invalid cond, got nil")
+	}
+}

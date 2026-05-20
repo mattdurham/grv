@@ -145,6 +145,60 @@ func TestParseFile(t *testing.T) {
 	}
 }
 
+func TestParseFile_NonExistent(t *testing.T) {
+	_, _, _, err := editor.ParseFile("/no/such/file/definitely_does_not_exist.go")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file, got nil")
+	}
+}
+
+func TestParseFile_InvalidSyntax(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.go")
+	if err := os.WriteFile(path, []byte("package p\nfunc badSyntax( {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := editor.ParseFile(path)
+	if err == nil {
+		t.Fatal("expected error for invalid syntax, got nil")
+	}
+}
+
+func TestEdit_FnError(t *testing.T) {
+	path := copyTestFile(t, "../testdata/simple.go")
+	original, _ := os.ReadFile(path)
+
+	sentinelErr := &testError{"fn failed"}
+	_, err := editor.Edit(path, false, func(f *ast.File, fset *token.FileSet) error {
+		return sentinelErr
+	})
+	if err == nil {
+		t.Fatal("expected error from fn, got nil")
+	}
+	if err.Error() != sentinelErr.Error() {
+		t.Errorf("error: got %v, want %v", err, sentinelErr)
+	}
+
+	after, _ := os.ReadFile(path)
+	if string(original) != string(after) {
+		t.Error("file should be unchanged when fn returns error")
+	}
+}
+
+func TestWriteAtomic_ReadonlyDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o444); err != nil {
+		t.Skip("cannot make dir readonly:", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	path := filepath.Join(dir, "out.go")
+	err := editor.WriteAtomic(path, []byte("package p\n"))
+	if err == nil {
+		t.Error("expected error writing to readonly dir, got nil")
+	}
+}
+
 type testError struct{ msg string }
 
 func (e *testError) Error() string { return e.msg }
