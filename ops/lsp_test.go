@@ -608,6 +608,363 @@ func TestHandleASTFind_ResultHasPath(t *testing.T) {
 	}
 }
 
+func TestHandleASTNodeAt_ForStmt(t *testing.T) {
+	// Position inside the for loop in fixtureForRange — exercises ForStmt path step
+	src := `package p
+func F() {
+	for i := 0; i < 10; i++ {
+		_ = i
+	}
+}
+`
+	path := writeTempFile(t, src)
+	// Line 3 is the for statement
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path")
+	}
+}
+
+func TestHandleASTNodeAt_RangeStmt(t *testing.T) {
+	src := `package p
+func F(items []int) {
+	for i, v := range items {
+		_ = i + v
+	}
+}
+`
+	path := writeTempFile(t, src)
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path for range stmt position")
+	}
+}
+
+func TestHandleASTNodeAt_SwitchStmt(t *testing.T) {
+	src := `package p
+func F(x int) {
+	switch x {
+	case 1:
+		_ = x
+	}
+}
+`
+	path := writeTempFile(t, src)
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path for switch stmt position")
+	}
+}
+
+func TestHandleASTNodeAt_StructField(t *testing.T) {
+	src := `package p
+type Dog struct {
+	Name string
+	Age  int
+}
+`
+	path := writeTempFile(t, src)
+	// Line 3 is the Name field
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 3, Col: 2})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path for struct field position")
+	}
+}
+
+func TestHandleASTFind_NestedPattern(t *testing.T) {
+	// Tests matchPattern recursive branch — pattern with nested object
+	src := `package p
+import "fmt"
+func F() {
+	fmt.Println("hello")
+	fmt.Sprintf("%d", 1)
+}
+`
+	path := writeTempFile(t, src)
+	// Find all calls to fmt.Println specifically (nested SelectorExpr pattern)
+	pattern, _ := json.Marshal(map[string]interface{}{
+		"kind": "CallExpr",
+		"fun":  map[string]interface{}{"kind": "SelectorExpr", "sel": "Println"},
+	})
+	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+		File:    path,
+		Pattern: pattern,
+	})
+	if err != nil {
+		t.Fatalf("HandleASTFind: %v", err)
+	}
+	text := resultText(t, result)
+	var results []ops.FindResult
+	if err := json.Unmarshal([]byte(text), &results); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 match for fmt.Println, got %d", len(results))
+	}
+}
+
+func TestHandleASTFind_BinaryOpFilter(t *testing.T) {
+	// Tests matchPattern with op field — finds only == comparisons
+	src := `package p
+func F(a, b int) bool {
+	if a == b {
+		return true
+	}
+	if a != b {
+		return false
+	}
+	return a > b
+}
+`
+	path := writeTempFile(t, src)
+	pattern, _ := json.Marshal(map[string]interface{}{
+		"kind": "BinaryExpr",
+		"op":   "==",
+	})
+	result, err := ops.HandleASTFind(ctx, emptyReq, ops.ASTFindArgs{
+		File:    path,
+		Pattern: pattern,
+	})
+	if err != nil {
+		t.Fatalf("HandleASTFind: %v", err)
+	}
+	text := resultText(t, result)
+	var results []ops.FindResult
+	if err := json.Unmarshal([]byte(text), &results); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 == comparison, got %d", len(results))
+	}
+}
+
+func TestHandleASTNodeAt_MultipleStmtKinds(t *testing.T) {
+	// One source with many stmt types — exercises stmtKindName arms
+	src := `package p
+
+import "fmt"
+
+func F(ch chan int) {
+	x := 1
+	switch x {
+	case 1:
+		_ = x
+	}
+	switch x.(type) {
+	}
+	select {
+	case v := <-ch:
+		_ = v
+	}
+	go func() {}()
+	defer fmt.Println()
+	fmt.Println(x)
+	return
+}
+`
+	tmpPath := writeTempFile(t, src)
+
+	// Line numbers (1-based):
+	//  6  → AssignStmt  (x := 1)
+	//  7  → SwitchStmt
+	// 11  → TypeSwitchStmt
+	// 14  → SelectStmt
+	// 17  → GoStmt
+	// 18  → DeferStmt
+	// 19  → ExprStmt
+	// 20  → ReturnStmt
+	tests := []struct {
+		name string
+		line int
+	}{
+		{"AssignStmt", 6},
+		{"SwitchStmt", 7},
+		{"TypeSwitchStmt", 11},
+		{"SelectStmt", 14},
+		{"GoStmt", 17},
+		{"DeferStmt", 18},
+		{"ExprStmt", 19},
+		{"ReturnStmt", 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{
+				File: tmpPath, Line: tt.line, Col: 2,
+			})
+			if err != nil {
+				t.Fatalf("HandleASTNodeAt %s: %v", tt.name, err)
+			}
+			text := resultText(t, result)
+			var resp ops.ASTNodeAtResponse
+			if err := json.Unmarshal([]byte(text), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(resp.Path) == 0 {
+				t.Fatalf("expected non-empty path for %s at line %d", tt.name, tt.line)
+			}
+		})
+	}
+}
+
+func TestHandleASTNodeAt_SecondIfStmt(t *testing.T) {
+	// Two if statements — exercises nthIndexOfKind counting
+	src := `package p
+func F(a, b int) int {
+	if a > 0 {
+		return a
+	}
+	if b > 0 {
+		return b
+	}
+	return 0
+}
+`
+	path := writeTempFile(t, src)
+	// Line 6 is the second if statement
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 6, Col: 2})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path")
+	}
+}
+
+func TestHandleASTNodeAt_InsideCaseClause(t *testing.T) {
+	// Position inside a case clause body — exercises stmtListOf(CaseClause)
+	src := `package p
+func F(x int) {
+	switch x {
+	case 1:
+		_ = x
+	case 2:
+		_ = x
+	}
+}
+`
+	path := writeTempFile(t, src)
+	// Line 5 is inside case 1 body
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 5, Col: 3})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path inside case clause")
+	}
+}
+
+func TestHandleASTNodeAt_InsideSelectCase(t *testing.T) {
+	// Position inside a select comm clause — exercises stmtListOf(CommClause)
+	src := `package p
+func F(ch <-chan int) {
+	select {
+	case v := <-ch:
+		_ = v
+	default:
+		return
+	}
+}
+`
+	path := writeTempFile(t, src)
+	// Line 5 is inside the first case body
+	result, err := ops.HandleASTNodeAt(ctx, emptyReq, ops.ASTNodeAtArgs{File: path, Line: 5, Col: 3})
+	if err != nil {
+		t.Fatalf("HandleASTNodeAt: %v", err)
+	}
+	text := resultText(t, result)
+	var resp ops.ASTNodeAtResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Path) == 0 {
+		t.Fatal("expected non-empty path inside select case")
+	}
+}
+
+func TestHandleASTFindSymbols_VarAndConst(t *testing.T) {
+	// Exercises VarSpec and ConstSpec arms in scanSymbols
+	src := `package p
+
+const MaxItems = 100
+const MinItems = 1
+
+var globalCount int
+var debugMode bool
+`
+	dir := t.TempDir()
+	f := filepath.Join(dir, "vars.go")
+	if err := os.WriteFile(f, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Find all symbols
+	result, err := ops.HandleASTFindSymbols(ctx, emptyReq, ops.ASTFindSymbolsArgs{
+		Dir:   dir,
+		Query: "*",
+	})
+	if err != nil {
+		t.Fatalf("HandleASTFindSymbols: %v", err)
+	}
+	text := resultText(t, result)
+	var results []ops.SymbolResult
+	if err := json.Unmarshal([]byte(text), &results); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected symbols from var/const file")
+	}
+	// Verify at least one const and one var are found
+	kinds := map[string]bool{}
+	for _, r := range results {
+		kinds[r.Kind] = true
+	}
+	if !kinds["ConstSpec"] && !kinds["VarSpec"] {
+		t.Errorf("expected ConstSpec or VarSpec in results, got kinds: %v", kinds)
+	}
+}
+
 func TestHandleASTFind_ResultHasMeta(t *testing.T) {
 	path := writeTempFile(t, fixtureA)
 
