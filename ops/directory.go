@@ -15,7 +15,8 @@ import (
 
 // ASTDirectoryArgs is the argument struct for ast_directory.
 type ASTDirectoryArgs struct {
-	Dir string `json:"dir"`
+	Dir       string `json:"dir"`
+	Recursive bool   `json:"recursive,omitempty"` // default false; true = walk all subdirs
 }
 
 // GoFileEntry describes a parsed Go file in the directory.
@@ -76,32 +77,52 @@ func HandleASTDirectory(args ASTDirectoryArgs) (json.RawMessage, error) {
 		return errResult("dir is required")
 	}
 
-	entries, err := os.ReadDir(args.Dir)
-	if err != nil {
-		return errResult(fmt.Sprintf("read dir: %v", err))
-	}
-
 	result := ASTDirectoryResult{
 		GoFiles:    []GoFileEntry{},
 		NonGoFiles: []NonGoFileEntry{},
 		Subdirs:    []string{},
 	}
 
+	if err := walkDir(args.Dir, args.Dir, args.Recursive, &result); err != nil {
+		return errResult(fmt.Sprintf("read dir: %v", err))
+	}
+
+	return okResult(result)
+}
+
+// walkDir recursively (or not) processes a directory, populating result.
+// relBase is the original root dir; all file paths are relative to it.
+func walkDir(root, dir string, recursive bool, result *ASTDirectoryResult) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
 	for _, entry := range entries {
 		name := entry.Name()
-		fullPath := filepath.Join(args.Dir, name)
+		// Skip hidden directories (e.g. .git, .bob)
+		if entry.IsDir() && strings.HasPrefix(name, ".") {
+			continue
+		}
+		fullPath := filepath.Join(dir, name)
+		relPath, _ := filepath.Rel(root, fullPath)
 
 		if entry.IsDir() {
-			result.Subdirs = append(result.Subdirs, name)
+			if recursive {
+				if err := walkDir(root, fullPath, recursive, result); err != nil {
+					return err
+				}
+			} else {
+				result.Subdirs = append(result.Subdirs, name)
+			}
 			continue
 		}
 
 		if strings.HasSuffix(name, ".go") {
 			gf, err := parseGoFile(fullPath)
 			if err != nil {
-				// Include file with empty symbols on parse error.
 				result.GoFiles = append(result.GoFiles, GoFileEntry{
-					File:       name,
+					File:       relPath,
 					Readonly:   isReadonly(fullPath),
 					Structs:    []StructEntry{},
 					Interfaces: []IfaceEntry{},
@@ -110,7 +131,7 @@ func HandleASTDirectory(args ASTDirectoryArgs) (json.RawMessage, error) {
 				})
 				continue
 			}
-			gf.File = name
+			gf.File = relPath
 			result.GoFiles = append(result.GoFiles, *gf)
 		} else {
 			info, err := entry.Info()
@@ -119,14 +140,13 @@ func HandleASTDirectory(args ASTDirectoryArgs) (json.RawMessage, error) {
 				size = info.Size()
 			}
 			result.NonGoFiles = append(result.NonGoFiles, NonGoFileEntry{
-				File:     name,
+				File:     relPath,
 				Size:     size,
 				Readonly: isReadonly(fullPath),
 			})
 		}
 	}
-
-	return okResult(result)
+	return nil
 }
 
 func parseGoFile(path string) (*GoFileEntry, error) {

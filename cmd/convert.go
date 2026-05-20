@@ -184,8 +184,8 @@ func RunConvert(dir string) {
 		os.Exit(1)
 	}
 
-	// Get directory inventory
-	dirArgs, _ := json.Marshal(map[string]interface{}{"dir": abs, "recursive": false})
+	// Get directory inventory — recursive by default
+	dirArgs, _ := json.Marshal(map[string]interface{}{"dir": abs, "recursive": true})
 	resp, err := SendRequest(sockPath, "ast_directory", dirArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "grv convert: ast_directory: %v\n", err)
