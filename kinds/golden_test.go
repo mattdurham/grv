@@ -441,3 +441,212 @@ func TestGoldenRangeOverSlice(t *testing.T) {
 		t.Errorf("expected 6, got %q", out)
 	}
 }
+
+// TestGoldenForLoop generates and runs a classic 3-clause for loop summing 1..5.
+func TestGoldenForLoop(t *testing.T) {
+	// for i := 0; i < 5; i++ { sum += i+1 }
+	// Actually: for i := 1; i <= 5; i++ { sum += i }
+	// sum := 0
+	assignSum := assign(":=", []json.RawMessage{ident("sum")}, []json.RawMessage{intLit("0")})
+
+	// sum += i
+	addAssign := assign("+=", []json.RawMessage{ident("sum")}, []json.RawMessage{ident("i")})
+
+	// i++
+	inc, _ := json.Marshal(&kinds.IncDecStmt{KindField: "IncDecStmt", X: ident("i"), Tok: "++"})
+
+	// for i := 1; i <= 5; i++
+	cond, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("i"), Op: "<=", Y: intLit("5")})
+	init := assign(":=", []json.RawMessage{ident("i")}, []json.RawMessage{intLit("1")})
+	forStmt, _ := json.Marshal(&kinds.ForStmt{
+		KindField: "ForStmt",
+		Init:      init,
+		Cond:      cond,
+		Post:      inc,
+		Body:      block(addAssign),
+	})
+
+	println := exprStmt(call(sel(ident("fmt"), "Println"), ident("sum")))
+	mainBody := block(assignSum, forStmt, println)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{buildDecl(t, importDecl("fmt")), buildDecl(t, mainFn)})
+	if strings.TrimSpace(out) != "15" {
+		t.Errorf("expected 15, got %q", out)
+	}
+}
+
+// TestGoldenExprSwitch generates and runs an expression switch.
+func TestGoldenExprSwitch(t *testing.T) {
+	// x := 2; switch x { case 1: fmt.Println("one") case 2: fmt.Println("two") default: fmt.Println("other") }
+	assignX := assign(":=", []json.RawMessage{ident("x")}, []json.RawMessage{intLit("2")})
+
+	case1, _ := json.Marshal(&kinds.CaseClause{KindField: "CaseClause", List: []json.RawMessage{intLit("1")}, Body: []json.RawMessage{exprStmt(call(sel(ident("fmt"), "Println"), strLit(`"one"`)))}})
+	case2, _ := json.Marshal(&kinds.CaseClause{KindField: "CaseClause", List: []json.RawMessage{intLit("2")}, Body: []json.RawMessage{exprStmt(call(sel(ident("fmt"), "Println"), strLit(`"two"`)))}})
+	caseDefault, _ := json.Marshal(&kinds.CaseClause{KindField: "CaseClause", List: nil, Body: []json.RawMessage{exprStmt(call(sel(ident("fmt"), "Println"), strLit(`"other"`)))}})
+
+	switchStmt, _ := json.Marshal(&kinds.SwitchStmt{KindField: "SwitchStmt", Tag: ident("x"), Body: block(case1, case2, caseDefault)})
+	mainBody := block(assignX, switchStmt)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{buildDecl(t, importDecl("fmt")), buildDecl(t, mainFn)})
+	if strings.TrimSpace(out) != "two" {
+		t.Errorf("expected two, got %q", out)
+	}
+}
+
+// TestGoldenIfElse generates and runs if/else.
+func TestGoldenIfElse(t *testing.T) {
+	// x := 10; if x > 5 { fmt.Println("big") } else { fmt.Println("small") }
+	assignX := assign(":=", []json.RawMessage{ident("x")}, []json.RawMessage{intLit("10")})
+	cond, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("x"), Op: ">", Y: intLit("5")})
+	thenBlock := block(exprStmt(call(sel(ident("fmt"), "Println"), strLit(`"big"`))))
+	elseBlock := block(exprStmt(call(sel(ident("fmt"), "Println"), strLit(`"small"`))))
+	ifStmt, _ := json.Marshal(&kinds.IfStmt{KindField: "IfStmt", Cond: cond, Body: thenBlock, Else: elseBlock})
+	mainBody := block(assignX, ifStmt)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{buildDecl(t, importDecl("fmt")), buildDecl(t, mainFn)})
+	if strings.TrimSpace(out) != "big" {
+		t.Errorf("expected big, got %q", out)
+	}
+}
+
+// TestGoldenMultipleReturnAndError generates and runs a function returning (int, error).
+func TestGoldenMultipleReturnAndError(t *testing.T) {
+	// func divide(a, b int) (int, error) {
+	//     if b == 0 { return 0, errors.New("div by zero") }
+	//     return a / b, nil
+	// }
+	// func main() { v, err := divide(10, 2); if err != nil { ... } fmt.Println(v) }
+	errPkg := ident("errors")
+	newErr := call(sel(errPkg, "New"), strLit(`"div by zero"`))
+	zeroCond, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("b"), Op: "==", Y: intLit("0")})
+	guardBody := block(returnStmt(intLit("0"), newErr))
+	guard, _ := json.Marshal(&kinds.IfStmt{KindField: "IfStmt", Cond: zeroCond, Body: guardBody})
+
+	div, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("a"), Op: "/", Y: ident("b")})
+	nilIdent, _ := json.Marshal(&kinds.Ident{KindField: "Ident", Name: "nil"})
+	divBody := block(guard, returnStmt(div, nilIdent))
+
+	intType := ident("int")
+	errType := ident("error")
+	params := []json.RawMessage{field([]string{"a", "b"}, intType)}
+	results := []json.RawMessage{field(nil, intType), field(nil, errType)}
+	divideFn := funcDecl("divide", params, results, divBody)
+
+	// main: v, err := divide(10, 2); if err != nil { panic(...) }; fmt.Println(v)
+	divCall := call(ident("divide"), intLit("10"), intLit("2"))
+	assignVErr := assign(":=", []json.RawMessage{ident("v"), ident("err")}, []json.RawMessage{divCall})
+	errCheck, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("err"), Op: "!=", Y: nilIdent})
+	panicCall := exprStmt(call(ident("panic"), ident("err")))
+	errIf, _ := json.Marshal(&kinds.IfStmt{KindField: "IfStmt", Cond: errCheck, Body: block(panicCall)})
+	println := exprStmt(call(sel(ident("fmt"), "Println"), ident("v")))
+	mainBody := block(assignVErr, errIf, println)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{
+		buildDecl(t, importDecl("errors", "fmt")),
+		buildDecl(t, divideFn),
+		buildDecl(t, mainFn),
+	})
+	if strings.TrimSpace(out) != "5" {
+		t.Errorf("expected 5, got %q", out)
+	}
+}
+
+// TestGoldenMapOperations generates and runs map set/get.
+func TestGoldenMapOperations(t *testing.T) {
+	// m := map[string]int{}; m["a"] = 1; m["b"] = 2; fmt.Println(m["a"] + m["b"])
+	mapType, _ := json.Marshal(&kinds.MapType{KindField: "MapType", Key: ident("string"), Value: ident("int")})
+	emptyLit, _ := json.Marshal(&kinds.CompositeLit{KindField: "CompositeLit", Type: mapType, Elts: []json.RawMessage{}})
+	assignM := assign(":=", []json.RawMessage{ident("m")}, []json.RawMessage{emptyLit})
+
+	// m["a"] = 1
+	idxA, _ := json.Marshal(&kinds.IndexExpr{KindField: "IndexExpr", X: ident("m"), Index: strLit(`"a"`)})
+	setA := assign("=", []json.RawMessage{idxA}, []json.RawMessage{intLit("1")})
+	idxB, _ := json.Marshal(&kinds.IndexExpr{KindField: "IndexExpr", X: ident("m"), Index: strLit(`"b"`)})
+	setB := assign("=", []json.RawMessage{idxB}, []json.RawMessage{intLit("2")})
+
+	// fmt.Println(m["a"] + m["b"])
+	sum, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: idxA, Op: "+", Y: idxB})
+	println := exprStmt(call(sel(ident("fmt"), "Println"), sum))
+
+	mainBody := block(assignM, setA, setB, println)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{buildDecl(t, importDecl("fmt")), buildDecl(t, mainFn)})
+	if strings.TrimSpace(out) != "3" {
+		t.Errorf("expected 3, got %q", out)
+	}
+}
+
+// TestGoldenClosureCapture generates a closure that captures a variable.
+func TestGoldenClosureCapture(t *testing.T) {
+	// n := 10; add := func(x int) int { return n + x }; fmt.Println(add(5))
+	assignN := assign(":=", []json.RawMessage{ident("n")}, []json.RawMessage{intLit("10")})
+
+	// func(x int) int { return n + x }
+	xParam := field([]string{"x"}, ident("int"))
+	intResult := field(nil, ident("int"))
+	addBody := block(returnStmt(func() json.RawMessage {
+		b, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: ident("n"), Op: "+", Y: ident("x")})
+		return b
+	}()))
+	ft, _ := json.Marshal(&kinds.FuncType{KindField: "FuncType", Params: []json.RawMessage{xParam}, Results: []json.RawMessage{intResult}})
+	closure, _ := json.Marshal(&kinds.FuncLit{KindField: "FuncLit", Type: ft, Body: addBody})
+	assignAdd := assign(":=", []json.RawMessage{ident("add")}, []json.RawMessage{closure})
+
+	// fmt.Println(add(5))
+	addCall := call(ident("add"), intLit("5"))
+	println := exprStmt(call(sel(ident("fmt"), "Println"), addCall))
+
+	mainBody := block(assignN, assignAdd, println)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{buildDecl(t, importDecl("fmt")), buildDecl(t, mainFn)})
+	if strings.TrimSpace(out) != "15" {
+		t.Errorf("expected 15, got %q", out)
+	}
+}
+
+// TestGoldenStructAndMethod generates a struct type + method + instantiation.
+func TestGoldenStructAndMethod(t *testing.T) {
+	// type Point struct { X, Y int }
+	// func (p Point) Sum() int { return p.X + p.Y }
+	// func main() { pt := Point{X: 3, Y: 4}; fmt.Println(pt.Sum()) }
+	intType := ident("int")
+	xyField := field([]string{"X", "Y"}, intType)
+	structType, _ := json.Marshal(&kinds.StructType{KindField: "StructType", Fields: []json.RawMessage{xyField}})
+	typeSpec, _ := json.Marshal(&kinds.TypeSpec{KindField: "TypeSpec", Name: "Point", Type: structType})
+	typeDecl, _ := json.Marshal(&kinds.TypeDecl{KindField: "TypeDecl", Specs: []json.RawMessage{typeSpec}})
+
+	// func (p Point) Sum() int { return p.X + p.Y }
+	pxSel := sel(ident("p"), "X")
+	pySel := sel(ident("p"), "Y")
+	sumExpr, _ := json.Marshal(&kinds.BinaryExpr{KindField: "BinaryExpr", X: pxSel, Op: "+", Y: pySel})
+	sumBody := block(returnStmt(sumExpr))
+	recv := field([]string{"p"}, ident("Point"))
+	recvJSON, _ := json.Marshal(recv)
+	ft, _ := json.Marshal(&kinds.FuncType{KindField: "FuncType", Params: []json.RawMessage{}, Results: []json.RawMessage{field(nil, intType)}})
+	sumFn, _ := json.Marshal(&kinds.FuncDecl{KindField: "FuncDecl", Recv: recvJSON, Name: "Sum", Type: ft, Body: sumBody})
+
+	// Point{X: 3, Y: 4}
+	kv3, _ := json.Marshal(&kinds.KeyValueExpr{KindField: "KeyValueExpr", Key: ident("X"), Value: intLit("3")})
+	kv4, _ := json.Marshal(&kinds.KeyValueExpr{KindField: "KeyValueExpr", Key: ident("Y"), Value: intLit("4")})
+	ptLit, _ := json.Marshal(&kinds.CompositeLit{KindField: "CompositeLit", Type: ident("Point"), Elts: []json.RawMessage{kv3, kv4}})
+	assignPt := assign(":=", []json.RawMessage{ident("pt")}, []json.RawMessage{ptLit})
+	println := exprStmt(call(sel(ident("fmt"), "Println"), call(sel(ident("pt"), "Sum"))))
+	mainBody := block(assignPt, println)
+	mainFn := funcDecl("main", nil, nil, mainBody)
+
+	out := runProgram(t, []ast.Decl{
+		buildDecl(t, importDecl("fmt")),
+		buildDecl(t, typeDecl),
+		buildDecl(t, sumFn),
+		buildDecl(t, mainFn),
+	})
+	if strings.TrimSpace(out) != "7" {
+		t.Errorf("expected 7, got %q", out)
+	}
+}
