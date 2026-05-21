@@ -14,8 +14,17 @@ import (
 )
 
 // ASTInsertArgs is the argument struct for ast_insert.
+//
+// Target selection (pick one):
+//   - File: explicit path to the target .go file
+//   - Dir:  auto-route to the canonical file within this package directory
+//   - (neither): daemon injects its working directory as Dir automatically
+//
+// When neither File nor Dir is specified, the daemon fills in Dir from its
+// own working directory so callers never need to specify a path.
 type ASTInsertArgs struct {
-	File   string          `json:"file"`
+	File   string          `json:"file,omitempty"` // explicit target file
+	Dir    string          `json:"dir,omitempty"`  // auto-route within this package dir
 	Path   json.RawMessage `json:"path"`
 	Index  int             `json:"index"`
 	Node   json.RawMessage `json:"node"`
@@ -24,6 +33,21 @@ type ASTInsertArgs struct {
 
 // HandleASTInsert implements the ast_insert tool.
 func HandleASTInsert(args ASTInsertArgs) (json.RawMessage, error) {
+	// Auto-route: Dir given (or daemon-injected) but no explicit File.
+	if args.File == "" && args.Dir != "" {
+		placeResult, err := HandleASTPlace(ASTPlaceArgs{
+			Dir:    args.Dir,
+			Node:   args.Node,
+			DryRun: args.DryRun,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("auto-route: %w", err)
+		}
+		return placeResult, nil
+	}
+	if args.File == "" {
+		return errResult("file or dir is required")
+	}
 	if isReadonly(args.File) {
 		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}

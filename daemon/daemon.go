@@ -169,10 +169,38 @@ func (s *Server) dispatchRequest(req Request) Response {
 		msg := fmt.Sprintf("unknown tool: %q", req.Tool)
 		return Response{Error: &msg}
 	}
-	result, err := handler(req.Args)
+	// Inject daemon's working directory as the default for any tool that
+	// accepts "file" or "dir" but received neither. This means callers never
+	// need to specify a path — the daemon already knows what it's serving.
+	args := s.injectDir(req.Args)
+	result, err := handler(args)
 	if err != nil {
 		msg := err.Error()
 		return Response{Error: &msg}
 	}
 	return Response{Result: result}
+}
+
+// injectDir fills in "dir" (and optionally "file") with the daemon's working
+// directory when the caller omitted both. This makes all tools work without
+// requiring the user to specify a path.
+func (s *Server) injectDir(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || raw[0] != '{' {
+		return raw
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	dirVal, hasDir := m["dir"]
+	fileVal, hasFile := m["file"]
+	emptyDir := !hasDir || string(dirVal) == `""` || string(dirVal) == "null"
+	emptyFile := !hasFile || string(fileVal) == `""` || string(fileVal) == "null"
+	if emptyDir && emptyFile {
+		m["dir"] = json.RawMessage(`"` + s.Dir + `"`)
+	} else if emptyFile && !emptyDir {
+		// dir is set — leave it; only inject if a tool needs file and dir is absent
+	}
+	out, _ := json.Marshal(m)
+	return out
 }

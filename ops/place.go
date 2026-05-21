@@ -25,11 +25,12 @@ type ASTPlaceArgs struct {
 
 // ASTPlaceResult is the response for ast_place.
 type ASTPlaceResult struct {
-	File    string `json:"file"`    // chosen file (relative to Dir)
-	Reason  string `json:"reason"`  // why this file was chosen
-	Created bool   `json:"created"` // true if file did not exist and was created
-	Diff    string `json:"diff"`
-	Changed bool   `json:"changed"`
+	File      string `json:"file"`      // chosen file (relative to Dir)
+	Namespace string `json:"namespace"` // canonical qualified name: <import-path>#<DeclName>
+	Reason    string `json:"reason"`    // why this file was chosen
+	Created   bool   `json:"created"`   // true if file did not exist and was created
+	Diff      string `json:"diff"`
+	Changed   bool   `json:"changed"`
 }
 
 // HandleASTPlace routes a new declaration to the correct file and inserts it.
@@ -96,12 +97,14 @@ func HandleASTPlace(args ASTPlaceArgs) (json.RawMessage, error) {
 	}
 
 	rel, _ := filepath.Rel(args.Dir, targetFile)
+	ns := declNamespace(astDecl, args.Dir)
 	res := ASTPlaceResult{
-		File:    rel,
-		Reason:  reason,
-		Created: created,
-		Diff:    result.Diff,
-		Changed: result.Changed,
+		File:      rel,
+		Namespace: ns,
+		Reason:    reason,
+		Created:   created,
+		Diff:      result.Diff,
+		Changed:   result.Changed,
 	}
 	return okResult(res)
 }
@@ -348,4 +351,71 @@ func defaultFile(pkg *packageInfo, dir string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// declNamespace returns the canonical namespace for a declaration:
+//   <import-path>#<DeclName>
+//
+// e.g. "github.com/mattdurham/grv/ops#Dog"
+// Falls back to <dir>#<name> if go.mod can't be found.
+func declNamespace(decl ast.Decl, dir string) string {
+	name := declName(decl)
+	if name == "" {
+		return ""
+	}
+	importPath := packageImportPath(dir)
+	return importPath + "#" + name
+}
+
+// declName extracts the primary identifier from a declaration.
+func declName(decl ast.Decl) string {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		return d.Name.Name
+	case *ast.GenDecl:
+		for _, spec := range d.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				return s.Name.Name
+			case *ast.ValueSpec:
+				if len(s.Names) > 0 {
+					return s.Names[0].Name
+				}
+			case *ast.ImportSpec:
+				if s.Path != nil {
+					return strings.Trim(s.Path.Value, `"`)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// packageImportPath finds the Go module import path for a directory by
+// reading the nearest go.mod and combining module + relative path.
+func packageImportPath(dir string) string {
+	abs, _ := filepath.Abs(dir)
+	// Walk up to find go.mod
+	for d := abs; d != filepath.Dir(d); d = filepath.Dir(d) {
+		gomod := filepath.Join(d, "go.mod")
+		data, err := os.ReadFile(gomod)
+		if err != nil {
+			continue
+		}
+		// Extract module path from first "module " line
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "module ") {
+				mod := strings.TrimSpace(strings.TrimPrefix(line, "module"))
+				// rel path from module root to dir
+				rel, _ := filepath.Rel(d, abs)
+				if rel == "." || rel == "" {
+					return mod
+				}
+				return mod + "/" + filepath.ToSlash(rel)
+			}
+		}
+	}
+	// Fallback: use the directory name
+	return filepath.Base(abs)
 }
