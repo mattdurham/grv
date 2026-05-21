@@ -219,3 +219,90 @@ func TestASTPlace_ReasonNonEmpty(t *testing.T) {
 		t.Errorf("reason should mention Dog, got %q", r.Reason)
 	}
 }
+
+// ---- packageImportPath ----
+
+func TestPackageImportPath_WithGoMod(t *testing.T) {
+	// Create a temp module with go.mod
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module github.com/example/myapp\n\ngo 1.21\n"), 0644)
+	subpkg := filepath.Join(dir, "internal", "util")
+	os.MkdirAll(subpkg, 0755)
+
+	// Root package
+	got := ops.PackageImportPath(dir)
+	if got != "github.com/example/myapp" {
+		t.Errorf("root: expected github.com/example/myapp, got %q", got)
+	}
+
+	// Sub-package
+	got = ops.PackageImportPath(subpkg)
+	if got != "github.com/example/myapp/internal/util" {
+		t.Errorf("subpkg: expected github.com/example/myapp/internal/util, got %q", got)
+	}
+}
+
+func TestPackageImportPath_NoGoMod(t *testing.T) {
+	// No go.mod → falls back to directory basename
+	dir := t.TempDir()
+	got := ops.PackageImportPath(dir)
+	if got == "" {
+		t.Error("expected non-empty fallback, got empty string")
+	}
+	// Should not panic
+}
+
+// ---- namespace in ast_list ----
+
+func TestASTList_HasNamespace(t *testing.T) {
+	dir := setupPkgDir(t, map[string]string{
+		"go.mod": "module github.com/example/animals\n\ngo 1.21\n",
+		"dog.go": "package animals\ntype Dog struct{}\nfunc (d *Dog) Bark() {}\n",
+	})
+
+	nodeJSON, _ := json.Marshal(map[string]interface{}{"kind": "TypeDecl"}) // unused but needed
+	_ = nodeJSON
+
+	raw, err := ops.HandleASTList(ops.ASTListArgs{File: filepath.Join(dir, "dog.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items []ops.ASTListItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	foundDog := false
+	for _, item := range items {
+		if item.Name == "Dog" {
+			foundDog = true
+			if item.Namespace != "github.com/example/animals#Dog" {
+				t.Errorf("Dog namespace: expected github.com/example/animals#Dog, got %q", item.Namespace)
+			}
+		}
+	}
+	if !foundDog {
+		t.Errorf("Dog not found in items: %v", items)
+	}
+}
+
+// ---- namespace in ast_place result ----
+
+func TestASTPlace_HasNamespace(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module github.com/example/pets\n\ngo 1.21\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "pets.go"), []byte("package pets\n"), 0644)
+
+	catNode, _ := json.Marshal(typeDecl("Cat"))
+	result, err := ops.HandleASTPlace(ops.ASTPlaceArgs{Dir: dir, Node: catNode, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r ops.ASTPlaceResult
+	if err := json.Unmarshal(result, &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if r.Namespace != "github.com/example/pets#Cat" {
+		t.Errorf("expected github.com/example/pets#Cat, got %q", r.Namespace)
+	}
+}

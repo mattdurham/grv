@@ -393,6 +393,9 @@ func declName(decl ast.Decl) string {
 
 // packageImportPath finds the Go module import path for a directory by
 // reading the nearest go.mod and combining module + relative path.
+// PackageImportPath is exported for testing.
+var PackageImportPath = packageImportPath
+
 func packageImportPath(dir string) string {
 	abs, _ := filepath.Abs(dir)
 	// Walk up to find go.mod

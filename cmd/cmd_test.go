@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,5 +213,105 @@ func TestConvertReport_ContainsKeyInfo(t *testing.T) {
 	}
 	if !strings.Contains(report, "internal") {
 		t.Error("report should list subdirs")
+	}
+}
+
+// ---- PrintGrammar ----
+
+func TestPrintGrammar_AllKinds(t *testing.T) {
+	var buf strings.Builder
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	cmd.PrintGrammar("")
+	w.Close()
+	os.Stdout = old
+	io.Copy(&buf, r)
+	out := buf.String()
+
+	// Should list at least some kind groups
+	for _, expected := range []string{"Ident", "IfStmt", "FuncDecl", "BlockStmt"} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("grammar listing should mention %s", expected)
+		}
+	}
+}
+
+func TestPrintGrammar_SpecificKind(t *testing.T) {
+	var buf strings.Builder
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+	cmd.PrintGrammar("IfStmt")
+	w.Close()
+	os.Stdout = old
+	io.Copy(&buf, r)
+	out := buf.String()
+
+	if !strings.Contains(out, "IfStmt") {
+		t.Error("expected IfStmt in detailed grammar output")
+	}
+	if !strings.Contains(out, "cond") && !strings.Contains(out, "Cond") {
+		t.Error("expected condition field mention in IfStmt grammar")
+	}
+}
+
+// ---- PrintHelp ----
+
+func TestPrintHelp_AllTools(t *testing.T) {
+	var buf strings.Builder
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+	cmd.PrintHelp("")
+	w.Close()
+	os.Stdout = old
+	io.Copy(&buf, r)
+	out := buf.String()
+
+	for _, expected := range []string{"ast_list", "ast_query", "ast_insert", "ast_find"} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("help listing should mention %s", expected)
+		}
+	}
+}
+
+func TestPrintHelp_SpecificTool(t *testing.T) {
+	var buf strings.Builder
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+	cmd.PrintHelp("ast_rename")
+	w.Close()
+	os.Stdout = old
+	io.Copy(&buf, r)
+	out := buf.String()
+
+	if !strings.Contains(out, "ast_rename") {
+		t.Error("expected ast_rename in tool help output")
+	}
+	if !strings.Contains(out, "file") {
+		t.Error("expected 'file' arg in ast_rename help")
+	}
+}
+
+// ---- HashDir ----
+
+func TestHashDir_Deterministic(t *testing.T) {
+	h1 := cmd.HashDir("/some/path")
+	h2 := cmd.HashDir("/some/path")
+	if h1 != h2 {
+		t.Errorf("HashDir not deterministic: %q vs %q", h1, h2)
+	}
+	if len(h1) != 8 {
+		t.Errorf("expected 8-char hash, got %q (len %d)", h1, len(h1))
+	}
+}
+
+func TestHashDir_DifferentPaths(t *testing.T) {
+	h1 := cmd.HashDir("/path/a")
+	h2 := cmd.HashDir("/path/b")
+	if h1 == h2 {
+		t.Error("different paths should produce different hashes")
 	}
 }
