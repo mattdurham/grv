@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
@@ -14,6 +15,8 @@ import (
 	"strings"
 
 	"golang.org/x/mod/modfile"
+
+	"github.com/mattdurham/grv/kinds"
 )
 
 // ConvertResult holds the parsed output of an ast_directory call.
@@ -212,7 +215,8 @@ func RunConvert(dir string) {
 
 	changed, skipped, errors := 0, 0, 0
 
-	// Convert Go files
+	// Pass 1: format all Go files in-place via go/format
+	fmt.Println("Pass 1: formatting...")
 	for _, f := range result.GoFiles {
 		if f.Readonly {
 			skipped++
@@ -225,19 +229,10 @@ func RunConvert(dir string) {
 		} else if r.Changed {
 			fmt.Printf("  CHANGED %s\n", f.File)
 			changed++
-		} else {
-			fmt.Printf("  OK      %s\n", f.File)
 		}
 	}
-
-	// Convert go.mod files; skip everything else (non-Go is binary)
 	for _, f := range result.NonGoFiles {
-		if f.Readonly {
-			skipped++
-			continue
-		}
-		base := filepath.Base(f.File)
-		if base == "go.mod" {
+		if !f.Readonly && filepath.Base(f.File) == "go.mod" {
 			r := convertGoModFile(sockPath, abs, f.File)
 			if r.Error != "" {
 				fmt.Printf("  ERROR  %s: %s\n", f.File, r.Error)
@@ -245,15 +240,34 @@ func RunConvert(dir string) {
 			} else if r.Changed {
 				fmt.Printf("  CHANGED %s\n", f.File)
 				changed++
-			} else {
-				fmt.Printf("  OK      %s\n", f.File)
 			}
 		}
-		// go.sum and all other non-Go files: skip silently
 	}
 
-	fmt.Printf("\nDone: %d changed, %d unchanged, %d skipped (readonly), %d errors\n",
-		changed, result.ReadWrite-changed-errors, skipped, errors)
+	// Pass 2: structural reorganisation — move each type to its canonical file.
+	// Rules: struct Foo → foo.go, interface Bar → bar.go.
+	// Skips _test.go files (test helpers must stay in test files to avoid import cycles).
+	// Uses alreadyMoved to prevent double-placing the same type in one run.
+	fmt.Println("\nPass 2: reorganising...")
+	pkgDirs := collectPackageDirs(abs, result.GoFiles)
+	alreadyMoved := map[string]bool{} // key: pkgDir+"::"+typeName
+	moved := 0
+	for _, pkgDir := range pkgDirs {
+		m, errs := reorganisePackage(sockPath, pkgDir, alreadyMoved)
+		moved += m
+		for _, e := range errs {
+			fmt.Printf("  ERROR  %s\n", e)
+			errors++
+		}
+	}
+	if moved > 0 {
+		fmt.Printf("  %d declaration(s) moved to canonical files\n", moved)
+	} else {
+		fmt.Println("  already canonical — nothing to move")
+	}
+
+	fmt.Printf("\nDone: %d reformatted, %d moved, %d skipped (readonly), %d errors\n",
+		changed, moved, skipped, errors)
 
 	if errors > 0 {
 		os.Exit(1)
@@ -288,4 +302,196 @@ func resolveSock(dir string) (string, error) {
 		return "", fmt.Errorf("start daemon: %w", err)
 	}
 	return sock, nil
+}
+
+// ---- Pass 2: structural reorganisation ----
+
+// collectPackageDirs returns unique package directories from the GoFiles list.
+func collectPackageDirs(base string, files []GoFileEntry) []string {
+	seen := map[string]bool{}
+	var dirs []string
+	for _, f := range files {
+		if f.Readonly || strings.HasSuffix(f.File, "_test.go") {
+			continue
+		}
+		dir := filepath.Join(base, filepath.Dir(f.File))
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
+}
+
+// reorganisePackage moves type declarations in pkgDir to their canonical files.
+// Skips _test.go files. Uses alreadyMoved to prevent double-placing.
+func reorganisePackage(sockPath, pkgDir string, alreadyMoved map[string]bool) (moved int, errs []string) {
+	dirArgs, _ := json.Marshal(map[string]interface{}{"dir": pkgDir, "recursive": false})
+	resp, err := SendRequest(sockPath, "ast_directory", dirArgs)
+	if err != nil {
+		return 0, []string{fmt.Sprintf("ast_directory %s: %v", pkgDir, err)}
+	}
+	var dirResult struct {
+		GoFiles []struct {
+			File       string `json:"file"`
+			Readonly   bool   `json:"readonly"`
+			Structs    []struct{ Name string `json:"name"` } `json:"structs"`
+			Interfaces []struct{ Name string `json:"name"` } `json:"interfaces"`
+		} `json:"go_files"`
+	}
+	if err := json.Unmarshal(resp, &dirResult); err != nil {
+		return 0, []string{fmt.Sprintf("parse: %v", err)}
+	}
+
+	for _, f := range dirResult.GoFiles {
+		if f.Readonly || strings.HasSuffix(f.File, "_test.go") {
+			continue
+		}
+		filePath := filepath.Join(pkgDir, f.File)
+		for _, s := range append(asNames(f.Structs), asNames(f.Interfaces)...) {
+			key := pkgDir + "::" + s
+			canonical := strings.ToLower(s) + ".go"
+			if f.File == canonical || alreadyMoved[key] {
+				continue
+			}
+			if n, e := moveType(sockPath, pkgDir, filePath, s); n {
+				moved++
+				alreadyMoved[key] = true
+				fmt.Printf("  MOVED  %s:%s → %s\n", f.File, s, canonical)
+			} else if e != "" {
+				errs = append(errs, e)
+			}
+		}
+	}
+	return moved, errs
+}
+
+type nameHolder interface{ getName() string }
+
+func asNames(items []struct{ Name string `json:"name"` }) []string {
+	names := make([]string, len(items))
+	for i, v := range items {
+		names[i] = v.Name
+	}
+	return names
+}
+
+// moveType moves a type declaration from sourceFile to its canonical file using ast_place.
+// It: reads+parses the source, marshals the TypeSpec via kinds.MarshalNode, checks the
+// target doesn't already have the type (idempotency), removes from source, places in target.
+func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
+	// 1. Read and parse source file
+	content, err := readFileContent(sockPath, sourceFile)
+	if err != nil {
+		return false, fmt.Sprintf("read %s: %v", sourceFile, err)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, sourceFile, content, parser.ParseComments)
+	if err != nil {
+		return false, ""
+	}
+
+	// 2. Find the TypeSpec
+	typeSpec, genDecl, specIdx := findTypeSpec(f, name)
+	if typeSpec == nil {
+		return false, "" // not in this file
+	}
+
+	// 3. Marshal the TypeSpec via kinds package for accurate serialisation
+	specJSON, err := kinds.MarshalNode(typeSpec)
+	if err != nil {
+		return false, fmt.Sprintf("marshal %s: %v", name, err)
+	}
+	nodeToPlace, _ := json.Marshal(map[string]interface{}{
+		"kind":  "TypeDecl",
+		"specs": []json.RawMessage{specJSON},
+	})
+
+	// 4. Determine target file via ast_place dry run
+	placeArgs, _ := json.Marshal(map[string]interface{}{"dir": pkgDir, "node": json.RawMessage(nodeToPlace), "dry_run": true})
+	placeResp, err := SendRequest(sockPath, "ast_place", placeArgs)
+	if err != nil {
+		return false, ""
+	}
+	var pr struct{ File string `json:"file"` }
+	if err := json.Unmarshal(placeResp, &pr); err != nil {
+		return false, ""
+	}
+	targetPath := filepath.Join(pkgDir, pr.File)
+	if targetPath == sourceFile {
+		return false, "" // already canonical
+	}
+
+	// 5. Idempotency: check target doesn't already have this type (check disk directly)
+	if data, statErr := os.ReadFile(targetPath); statErr == nil {
+		tfset := token.NewFileSet()
+		if tf, parseErr := parser.ParseFile(tfset, targetPath, data, 0); parseErr == nil {
+			if existing, _, _ := findTypeSpec(tf, name); existing != nil {
+				return false, "" // already there — skip
+			}
+		}
+	}
+
+	// 6. Remove from source by rewriting file without this TypeSpec
+	if err := removeTypeFromFile(sockPath, sourceFile, f, fset, content, genDecl, specIdx); err != nil {
+		return false, fmt.Sprintf("remove %s from %s: %v", name, sourceFile, err)
+	}
+
+	// 7. Place into target (with all source imports for safety; goimports cleans up)
+	if _, err := SendRequest(sockPath, "ast_place", func() json.RawMessage {
+		b, _ := json.Marshal(map[string]interface{}{"dir": pkgDir, "node": json.RawMessage(nodeToPlace), "dry_run": false})
+		return b
+	}()); err != nil {
+		return false, fmt.Sprintf("place %s: %v", name, err)
+	}
+
+	// 8. Copy imports to target file (best-effort; goimports will prune unused ones)
+	for _, imp := range f.Imports {
+		p := strings.Trim(imp.Path.Value, `"`)
+		alias := ""
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		addArgs, _ := json.Marshal(map[string]interface{}{"file": targetPath, "path": p, "alias": alias})
+		SendRequest(sockPath, "ast_add_import", addArgs) //nolint:errcheck
+	}
+
+	return true, ""
+}
+
+// findTypeSpec searches an ast.File for a TypeSpec with the given name.
+// Returns (typeSpec, parentGenDecl, specIndex) or (nil, nil, 0) if not found.
+func findTypeSpec(f *ast.File, name string) (*ast.TypeSpec, *ast.GenDecl, int) {
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok.String() != "type" {
+			continue
+		}
+		for i, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if ok && ts.Name.Name == name {
+				return ts, gd, i
+			}
+		}
+	}
+	return nil, nil, 0
+}
+
+// removeTypeFromFile rewrites sourceFile with the named TypeSpec removed.
+func removeTypeFromFile(sockPath, sourceFile string, f *ast.File, fset *token.FileSet, _ string, gd *ast.GenDecl, specIdx int) error {
+	gd.Specs = append(gd.Specs[:specIdx], gd.Specs[specIdx+1:]...)
+	if len(gd.Specs) == 0 {
+		newDecls := make([]ast.Decl, 0, len(f.Decls))
+		for _, d := range f.Decls {
+			if d != ast.Decl(gd) {
+				newDecls = append(newDecls, d)
+			}
+		}
+		f.Decls = newDecls
+	}
+	var buf bytes.Buffer
+	if err := format.Node(&buf, fset, f); err != nil {
+		return err
+	}
+	return writeFileContent(sockPath, sourceFile, buf.String())
 }
