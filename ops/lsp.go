@@ -319,13 +319,15 @@ type ASTFindSymbolsArgs struct {
 
 // SymbolResult is one entry in the ast_find_symbols response.
 type SymbolResult struct {
-	File string              `json:"file"`
-	Path []selector.PathStep `json:"path"`
-	Kind string              `json:"kind"`
-	Name string              `json:"name"`
-	Recv string              `json:"recv,omitempty"`
-	Line int                 `json:"line"`
-	Meta meta.Meta           `json:"meta,omitempty"`
+	File      string              `json:"file"`
+	Path      []selector.PathStep `json:"path"`
+	Kind      string              `json:"kind"`
+	Name      string              `json:"name"`
+	Recv      string              `json:"recv,omitempty"`
+	Line      int                 `json:"line"`
+	Namespace string              `json:"namespace,omitempty"` // <import-path>#<Name>
+	Readonly  bool                `json:"readonly"`
+	Meta      meta.Meta           `json:"meta,omitempty"`
 }
 
 // HandleASTFindSymbols implements the ast_find_symbols tool.
@@ -378,6 +380,10 @@ func scanSymbols(f *ast.File, fset *token.FileSet, src []byte, filePath, query s
 		return len(kindsFilter) == 0 || kindsFilter[k]
 	}
 
+	pkgPath := packageImportPath(filepath.Dir(filePath))
+	ro := isReadonly(filePath)
+	nsFor := func(name string) string { return pkgPath + "#" + name }
+
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
@@ -391,13 +397,15 @@ func scanSymbols(f *ast.File, fset *token.FileSet, src []byte, filePath, query s
 				step.Recv = recv
 			}
 			results = append(results, SymbolResult{
-				File: filePath,
-				Path: []selector.PathStep{step},
-				Kind: "FuncDecl",
-				Name: d.Name.Name,
-				Recv: recv,
-				Line: fset.Position(d.Pos()).Line,
-				Meta: meta.Compute(fset, src, d, nil, 1),
+				File:      filePath,
+				Path:      []selector.PathStep{step},
+				Kind:      "FuncDecl",
+				Name:      d.Name.Name,
+				Recv:      recv,
+				Line:      fset.Position(d.Pos()).Line,
+				Namespace: nsFor(d.Name.Name),
+				Readonly:  ro,
+				Meta:      meta.Compute(fset, src, d, nil, 1),
 			})
 
 		case *ast.GenDecl:
@@ -408,12 +416,14 @@ func scanSymbols(f *ast.File, fset *token.FileSet, src []byte, filePath, query s
 						continue
 					}
 					results = append(results, SymbolResult{
-						File: filePath,
-						Path: []selector.PathStep{{Kind: "TypeSpec", Name: s.Name.Name}},
-						Kind: "TypeSpec",
-						Name: s.Name.Name,
-						Line: fset.Position(s.Pos()).Line,
-						Meta: meta.Compute(fset, src, s, nil, 1),
+						File:      filePath,
+						Path:      []selector.PathStep{{Kind: "TypeSpec", Name: s.Name.Name}},
+						Kind:      "TypeSpec",
+						Name:      s.Name.Name,
+						Line:      fset.Position(s.Pos()).Line,
+						Namespace: nsFor(s.Name.Name),
+						Readonly:  ro,
+						Meta:      meta.Compute(fset, src, s, nil, 1),
 					})
 				case *ast.ValueSpec:
 					specKind := "VarSpec"
@@ -428,11 +438,13 @@ func scanSymbols(f *ast.File, fset *token.FileSet, src []byte, filePath, query s
 							continue
 						}
 						results = append(results, SymbolResult{
-							File: filePath,
-							Path: []selector.PathStep{{Kind: specKind, Name: nameIdent.Name}},
-							Kind: specKind,
-							Name: nameIdent.Name,
-							Line: fset.Position(s.Pos()).Line,
+							File:      filePath,
+							Path:      []selector.PathStep{{Kind: specKind, Name: nameIdent.Name}},
+							Kind:      specKind,
+							Name:      nameIdent.Name,
+							Line:      fset.Position(s.Pos()).Line,
+							Namespace: nsFor(nameIdent.Name),
+							Readonly:  ro,
 						})
 					}
 				}

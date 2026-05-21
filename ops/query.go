@@ -7,12 +7,30 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"path/filepath"
 
 	"github.com/mattdurham/grv/editor"
 	"github.com/mattdurham/grv/kinds"
 	"github.com/mattdurham/grv/meta"
 	"github.com/mattdurham/grv/selector"
 )
+
+// astNodeName returns the primary declared name for a node, if any.
+func astNodeName(node ast.Node) string {
+	switch n := node.(type) {
+	case *ast.FuncDecl:
+		return n.Name.Name
+	case *ast.TypeSpec:
+		return n.Name.Name
+	case *ast.ValueSpec:
+		if len(n.Names) > 0 {
+			return n.Names[0].Name
+		}
+	case *ast.Ident:
+		return n.Name
+	}
+	return ""
+}
 
 // ErrorResponse is the JSON error shape returned for navigation failures.
 type ErrorResponse struct {
@@ -52,10 +70,12 @@ type ASTListArgs struct {
 
 // ASTListItem is one entry in the ast_list response.
 type ASTListItem struct {
-	Kind string `json:"kind"`
-	Name string `json:"name,omitempty"`
-	Recv string `json:"recv,omitempty"`
-	Line int    `json:"line"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name,omitempty"`
+	Recv      string `json:"recv,omitempty"`
+	Line      int    `json:"line"`
+	Namespace string `json:"namespace,omitempty"` // <import-path>#<Name>
+	Readonly  bool   `json:"readonly"`
 }
 
 // HandleASTList implements the ast_list tool.
@@ -65,12 +85,28 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 		return errResult(fmt.Sprintf("parse: %v", err))
 	}
 
+	pkgPath := packageImportPath(filepath.Dir(args.File))
+	ro := isReadonly(args.File)
+
+	ns := func(name string) string {
+		if name == "" {
+			return ""
+		}
+		return pkgPath + "#" + name
+	}
+
 	var items []ASTListItem
 	for _, decl := range f.Decls {
 		pos := fset.Position(decl.Pos())
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			item := ASTListItem{Kind: "FuncDecl", Name: d.Name.Name, Line: pos.Line}
+			item := ASTListItem{
+				Kind:      "FuncDecl",
+				Name:      d.Name.Name,
+				Line:      pos.Line,
+				Namespace: ns(d.Name.Name),
+				Readonly:  ro,
+			}
 			if d.Recv != nil && len(d.Recv.List) > 0 {
 				item.Recv = recvTypeString(d.Recv.List[0])
 			}
@@ -85,24 +121,27 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 						name = is.Name.Name
 					}
 					items = append(items, ASTListItem{
-						Kind: "ImportDecl",
-						Name: name,
-						Line: fset.Position(is.Pos()).Line,
+						Kind:     "ImportDecl",
+						Name:     name,
+						Line:     fset.Position(is.Pos()).Line,
+						Readonly: ro,
 					})
 				}
 			case token.TYPE:
 				for _, spec := range d.Specs {
 					ts := spec.(*ast.TypeSpec)
 					items = append(items, ASTListItem{
-						Kind: "TypeDecl",
-						Name: ts.Name.Name,
-						Line: fset.Position(ts.Pos()).Line,
+						Kind:      "TypeDecl",
+						Name:      ts.Name.Name,
+						Line:      fset.Position(ts.Pos()).Line,
+						Namespace: ns(ts.Name.Name),
+						Readonly:  ro,
 					})
 				}
 			case token.VAR:
-				items = append(items, ASTListItem{Kind: "VarDecl", Line: pos.Line})
+				items = append(items, ASTListItem{Kind: "VarDecl", Line: pos.Line, Readonly: ro})
 			case token.CONST:
-				items = append(items, ASTListItem{Kind: "ConstDecl", Line: pos.Line})
+				items = append(items, ASTListItem{Kind: "ConstDecl", Line: pos.Line, Readonly: ro})
 			}
 		}
 	}
@@ -130,9 +169,11 @@ type ASTQueryArgs struct {
 
 // ASTQueryResponse is the response for ast_query.
 type ASTQueryResponse struct {
-	Node   json.RawMessage `json:"node"`
-	Source string          `json:"source,omitempty"`
-	Meta   meta.Meta       `json:"meta,omitempty"`
+	Node      json.RawMessage `json:"node"`
+	Source    string          `json:"source,omitempty"`
+	Namespace string          `json:"namespace,omitempty"` // <import-path>#<DeclName>
+	Readonly  bool            `json:"readonly"`
+	Meta      meta.Meta       `json:"meta,omitempty"`
 }
 
 // HandleASTQuery implements the ast_query tool.
@@ -167,7 +208,15 @@ func HandleASTQuery(args ASTQueryArgs) (json.RawMessage, error) {
 		return errResult(fmt.Sprintf("marshal node: %v", err))
 	}
 
-	resp := ASTQueryResponse{Node: nodeJSON}
+	resp := ASTQueryResponse{
+		Node:     nodeJSON,
+		Readonly: isReadonly(args.File),
+	}
+
+	// Namespace: derive from file's import path + declaration name
+	if name := astNodeName(node); name != "" {
+		resp.Namespace = packageImportPath(filepath.Dir(args.File)) + "#" + name
+	}
 
 	// Extract source text
 	pos := fset.Position(node.Pos())
