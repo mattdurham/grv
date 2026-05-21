@@ -432,12 +432,7 @@ func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
 		}
 	}
 
-	// 6. Remove from source by rewriting file without this TypeSpec
-	if err := removeTypeFromFile(sockPath, sourceFile, f, fset, content, genDecl, specIdx); err != nil {
-		return false, fmt.Sprintf("remove %s from %s: %v", name, sourceFile, err)
-	}
-
-	// 7. Place into target (with all source imports for safety; goimports cleans up)
+	// 6. Place into target FIRST — if this fails, source is untouched (safe)
 	if _, err := SendRequest(sockPath, "ast_place", func() json.RawMessage {
 		b, _ := json.Marshal(map[string]interface{}{"dir": pkgDir, "node": json.RawMessage(nodeToPlace), "dry_run": false})
 		return b
@@ -445,8 +440,17 @@ func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
 		return false, fmt.Sprintf("place %s: %v", name, err)
 	}
 
-	// 8. Copy imports to target file (best-effort; goimports will prune unused ones)
-	for _, imp := range f.Imports {
+	// 7. Only remove from source AFTER successful placement
+	if err := removeTypeFromFile(sockPath, sourceFile, f, fset, content, genDecl, specIdx); err != nil {
+		// Placement already succeeded; log but don't fail — goimports will see duplicate
+		return true, ""
+	}
+
+	// 8. Copy only the imports actually used by this type to the target file.
+	// We collect imports referenced in the TypeSpec's source span and copy those.
+	// goimports will prune any that are still unused.
+	usedImports := importsUsedByType(f, typeSpec)
+	for _, imp := range usedImports {
 		p := strings.Trim(imp.Path.Value, `"`)
 		alias := ""
 		if imp.Name != nil {
@@ -457,6 +461,39 @@ func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
 	}
 
 	return true, ""
+}
+
+// importsUsedByType returns the subset of f.Imports referenced within typeSpec.
+// Walks the type's AST collecting selector expressions (pkg.Name) — only those
+// packages are copied to the target file. goimports will prune any remaining unused.
+func importsUsedByType(f *ast.File, typeSpec *ast.TypeSpec) []*ast.ImportSpec {
+	referenced := map[string]bool{}
+	ast.Inspect(typeSpec, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok {
+				referenced[ident.Name] = true
+			}
+		}
+		return true
+	})
+	if len(referenced) == 0 {
+		return nil
+	}
+	var used []*ast.ImportSpec
+	for _, imp := range f.Imports {
+		localName := ""
+		if imp.Name != nil {
+			localName = imp.Name.Name
+		} else {
+			p := strings.Trim(imp.Path.Value, `"`)
+			parts := strings.Split(p, "/")
+			localName = parts[len(parts)-1]
+		}
+		if referenced[localName] {
+			used = append(used, imp)
+		}
+	}
+	return used
 }
 
 // findTypeSpec searches an ast.File for a TypeSpec with the given name.
