@@ -1,0 +1,9 @@
+# grv.toml — hook configuration for the grv project
+# Hooks run per-file and inject output into the meta dictionary.
+
+[[hooks]]
+name    = "lth"
+command = ["~/bin/lth", "--json", "search", "{namespace}", "--layers", "L3,L4", "--top", "5"]
+scope   = "file"
+cache   = true
+timeout = "10s"

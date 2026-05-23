@@ -86,8 +86,8 @@ func (r *Runner) RunFile(absFile string) map[string]interface{} {
 			continue
 		}
 
-		var hookResult map[string]interface{}
-		if err := json.Unmarshal(stdout.Bytes(), &hookResult); err != nil {
+		hookResult, err := parseHookOutput(stdout.Bytes())
+		if err != nil {
 			result[cfg.Name+".error"] = "json: " + err.Error()
 			continue
 		}
@@ -109,4 +109,25 @@ func (r *Runner) RunFile(absFile string) map[string]interface{} {
 // Invalidate clears all cached results for absFile.
 func (r *Runner) Invalidate(absFile string) {
 	r.cache.Invalidate(absFile)
+}
+
+// parseHookOutput unmarshals hook stdout into a flat map.
+// If the output is a JSON array, it is wrapped as {"results": [...]}.
+func parseHookOutput(b []byte) (map[string]interface{}, error) {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 {
+		return nil, nil
+	}
+	if b[0] == '[' {
+		var arr []interface{}
+		if err := json.Unmarshal(b, &arr); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"results": arr}, nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
