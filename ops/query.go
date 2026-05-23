@@ -70,12 +70,13 @@ type ASTListArgs struct {
 
 // ASTListItem is one entry in the ast_list response.
 type ASTListItem struct {
-	Kind      string `json:"kind"`
-	Name      string `json:"name,omitempty"`
-	Recv      string `json:"recv,omitempty"`
-	Line      int    `json:"line"`
-	Namespace string `json:"namespace,omitempty"` // <import-path>#<Name>
-	Readonly  bool   `json:"readonly"`
+	Kind      string    `json:"kind"`
+	Name      string    `json:"name,omitempty"`
+	Recv      string    `json:"recv,omitempty"`
+	Line      int       `json:"line"`
+	Namespace string    `json:"namespace,omitempty"` // <import-path>#<Name>
+	Readonly  bool      `json:"readonly"`
+	Meta      meta.Meta `json:"meta,omitempty"`
 }
 
 // HandleASTList implements the ast_list tool.
@@ -142,6 +143,15 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 				items = append(items, ASTListItem{Kind: "VarDecl", Line: pos.Line, Readonly: ro})
 			case token.CONST:
 				items = append(items, ASTListItem{Kind: "ConstDecl", Line: pos.Line, Readonly: ro})
+			}
+		}
+	}
+
+	if DefaultHookRunner != nil && len(items) > 0 {
+		hookMeta := mergeHookMeta(meta.Meta{}, args.File, nil)
+		if len(hookMeta) > 0 {
+			for i := range items {
+				items[i].Meta = hookMeta
 			}
 		}
 	}
@@ -227,6 +237,7 @@ func HandleASTQuery(args ASTQueryArgs) (json.RawMessage, error) {
 
 	// Compute metadata
 	resp.Meta = meta.Compute(fset, src, node, nil, len(steps))
+	resp.Meta = mergeHookMeta(resp.Meta, args.File, nil)
 
 	return okResult(resp)
 }
@@ -279,8 +290,9 @@ func HandleASTQueryMany(args ASTQueryManyArgs) (json.RawMessage, error) {
 
 // ASTMetaArgs is the argument struct for ast_meta.
 type ASTMetaArgs struct {
-	File string          `json:"file"`
-	Path json.RawMessage `json:"path"`
+	File  string          `json:"file"`
+	Path  json.RawMessage `json:"path"`
+	Hooks []string        `json:"hooks,omitempty"`
 }
 
 // HandleASTMeta implements the ast_meta tool.
@@ -292,6 +304,7 @@ func HandleASTMeta(args ASTMetaArgs) (json.RawMessage, error) {
 
 	if len(args.Path) == 0 || string(args.Path) == "null" || string(args.Path) == "[]" {
 		m := meta.FileInfo(fset, src, f)
+		m = mergeHookMeta(m, args.File, args.Hooks)
 		return okResult(m)
 	}
 
@@ -309,5 +322,6 @@ func HandleASTMeta(args ASTMetaArgs) (json.RawMessage, error) {
 	}
 
 	m := meta.Compute(fset, src, node, nil, len(steps))
+	m = mergeHookMeta(m, args.File, args.Hooks)
 	return okResult(m)
 }

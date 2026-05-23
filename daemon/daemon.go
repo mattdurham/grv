@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/mattdurham/grv/hooks"
 	"github.com/mattdurham/grv/ops"
 )
 
@@ -34,6 +37,8 @@ type Server struct {
 
 	lastActivity atomic.Int64
 	dispatch     map[string]func(json.RawMessage) (json.RawMessage, error)
+	hookRunner   hooks.RunnerInterface
+	repoRoot     string
 }
 
 // NewServer creates a new daemon Server.
@@ -44,6 +49,18 @@ func NewServer(dir, sockPath, pidPath, logPath string) *Server {
 		PIDPath:  pidPath,
 		LogPath:  logPath,
 	}
+
+	// Detect git repository root (best-effort; empty string if not a git repo)
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
+		s.repoRoot = strings.TrimSpace(string(out))
+	}
+
+	// Load hook config and create runner (optional — no error if config absent)
+	if configs, err := hooks.LoadConfig(dir); err == nil && len(configs) > 0 {
+		s.hookRunner = hooks.New(configs, s.repoRoot)
+		ops.SetDefaultHookRunner(s.hookRunner)
+	}
+
 	s.dispatch = s.buildDispatch()
 	return s
 }
@@ -178,7 +195,43 @@ func (s *Server) dispatchRequest(req Request) Response {
 		msg := err.Error()
 		return Response{Error: &msg}
 	}
+
+	// Invalidate hook cache for write operations so next read gets fresh results.
+	if s.hookRunner != nil && isWriteTool(req.Tool) {
+		if absFile := extractFileArg(args); absFile != "" {
+			s.hookRunner.Invalidate(absFile)
+		}
+	}
+
 	return Response{Result: result}
+}
+
+// writeTools is the set of tools that modify file content.
+var writeTools = map[string]bool{
+	"ast_insert":  true,
+	"ast_replace": true,
+	"ast_delete":  true,
+	"ast_rename":  true,
+	"file_write":  true,
+}
+
+func isWriteTool(tool string) bool {
+	return writeTools[tool]
+}
+
+// extractFileArg extracts the "file" field from a JSON args object.
+// Returns empty string if not present.
+func extractFileArg(raw json.RawMessage) string {
+	if len(raw) == 0 || raw[0] != '{' {
+		return ""
+	}
+	var m struct {
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	return m.File
 }
 
 // injectDir fills in "dir" (and optionally "file") with the daemon's working
