@@ -397,6 +397,17 @@ func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
 		return false, "" // not in this file
 	}
 
+	// Capture the doc comment from the GenDecl so it moves with the type.
+	// genDecl.Doc holds the comment group immediately above "type Name ...".
+	var docComment string
+	if genDecl.Doc != nil {
+		var lines []string
+		for _, c := range genDecl.Doc.List {
+			lines = append(lines, c.Text)
+		}
+		docComment = strings.Join(lines, "\n")
+	}
+
 	// 3. Marshal the TypeSpec via kinds package for accurate serialisation
 	specJSON, err := kinds.MarshalNode(typeSpec)
 	if err != nil {
@@ -438,6 +449,21 @@ func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
 		return b
 	}()); err != nil {
 		return false, fmt.Sprintf("place %s: %v", name, err)
+	}
+
+	// 6b. If the type had a doc comment, prepend it to the type declaration in the
+	// target file. We do a direct string replacement so no re-parse is needed.
+	if docComment != "" {
+		if targetContent, readErr := os.ReadFile(targetPath); readErr == nil {
+			needle := "\ntype " + name + " "
+			replacement := "\n" + docComment + "\ntype " + name + " "
+			if !strings.Contains(string(targetContent), docComment) {
+				newContent := strings.Replace(string(targetContent), needle, replacement, 1)
+				if newContent != string(targetContent) {
+					os.WriteFile(targetPath, []byte(newContent), 0644) //nolint:errcheck
+				}
+			}
+		}
 	}
 
 	// 7. Only remove from source AFTER successful placement
