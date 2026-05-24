@@ -31,7 +31,7 @@ func (n *ChanType) ToAST() (ast.Node, error) {
 	case "BOTH":
 		dir = ast.SEND | ast.RECV
 	default:
-		return nil, fmt.Errorf("ChanType.Dir: unknown direction %q", n.Dir)
+		return nil, fmt.Errorf("ChanType.Dir: unknown direction %q (valid: SEND, RECV, BOTH)", n.Dir)
 	}
 	return &ast.ChanType{Dir: dir, Value: value}, nil
 }

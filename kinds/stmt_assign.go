@@ -30,7 +30,7 @@ func (n *AssignStmt) ToAST() (ast.Node, error) {
 	}
 	tok := tokenFromString(n.Tok)
 	if tok == token.ILLEGAL {
-		return nil, fmt.Errorf("AssignStmt: unknown tok %q", n.Tok)
+		return nil, fmt.Errorf("AssignStmt: unknown tok %q (valid: =, :=, +=, -=, *=, /=, %%=, &=, |=, ^=, <<=, >>=, &^=)", n.Tok)
 	}
 	return &ast.AssignStmt{Lhs: lhs, Tok: tok, Rhs: rhs}, nil
 }

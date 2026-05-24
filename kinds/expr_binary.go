@@ -29,7 +29,7 @@ func (n *BinaryExpr) ToAST() (ast.Node, error) {
 	}
 	op := tokenFromString(n.Op)
 	if op == 0 {
-		return nil, fmt.Errorf("BinaryExpr.Op: unknown operator %q", n.Op)
+		return nil, fmt.Errorf("BinaryExpr.Op: unknown operator %q (valid: +, -, *, /, %%, &, |, ^, <<, >>, &^, &&, ||, ==, !=, <, <=, >, >=)", n.Op)
 	}
 	return &ast.BinaryExpr{X: x, Op: op, Y: y}, nil
 }

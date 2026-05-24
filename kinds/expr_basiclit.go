@@ -46,7 +46,10 @@ func tokKindFromString(s string) (token.Token, error) {
 	case "STRING":
 		return token.STRING, nil
 	default:
-		return token.ILLEGAL, fmt.Errorf("unknown token kind %q", s)
+		if s == "BOOL" {
+			return token.ILLEGAL, fmt.Errorf("unknown token kind %q: true/false are Ident nodes, not BasicLit", s)
+		}
+		return token.ILLEGAL, fmt.Errorf("unknown token kind %q (valid: INT, FLOAT, IMAG, CHAR, STRING)", s)
 	}
 }
 

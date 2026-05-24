@@ -24,7 +24,7 @@ func (n *IncDecStmt) ToAST() (ast.Node, error) {
 	}
 	tok := tokenFromString(n.Tok)
 	if tok == 0 {
-		return nil, fmt.Errorf("IncDecStmt.Tok: unknown token %q", n.Tok)
+		return nil, fmt.Errorf("IncDecStmt.Tok: unknown token %q (valid: ++, --)", n.Tok)
 	}
 	return &ast.IncDecStmt{X: x, Tok: tok}, nil
 }

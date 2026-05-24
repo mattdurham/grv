@@ -24,7 +24,7 @@ func (n *UnaryExpr) ToAST() (ast.Node, error) {
 	}
 	op := tokenFromString(n.Op)
 	if op == 0 {
-		return nil, fmt.Errorf("UnaryExpr.Op: unknown operator %q", n.Op)
+		return nil, fmt.Errorf("UnaryExpr.Op: unknown operator %q (valid: !, -, +, ^, *, &, <-)", n.Op)
 	}
 	return &ast.UnaryExpr{Op: op, X: x}, nil
 }
