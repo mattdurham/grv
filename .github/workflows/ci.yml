@@ -14,4 +14,22 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
-      - run: go test ./...
+      - run: go test -coverprofile=coverage.out ./...
+      - name: Coverage threshold (70%)
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          if awk "BEGIN {exit !($total < 70)}"; then
+            echo "Coverage ${total}% is below 70% threshold"
+            exit 1
+          fi
+      - name: Install gocognit
+        run: go install github.com/uudashr/gocognit/cmd/gocognit@latest
+      - name: Cyclomatic complexity (max 175)
+        run: |
+          violations=$(gocognit -over 175 .)
+          if [ -n "$violations" ]; then
+            echo "Functions exceeding complexity threshold:"
+            echo "$violations"
+            exit 1
+          fi
