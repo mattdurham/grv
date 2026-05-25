@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -17,12 +15,6 @@ func GRVDir() (string, error) {
 	return d, os.MkdirAll(d, 0755)
 }
 
-// HashDir returns an 8-character hex string derived from the absolute directory path.
-func HashDir(dir string) string {
-	h := sha256.Sum256([]byte(dir))
-	return fmt.Sprintf("%x", h[:4])
-}
-
-func SockPath(grvDir, hash string) string { return filepath.Join(grvDir, hash+".sock") }
-func PIDPath(grvDir, hash string) string  { return filepath.Join(grvDir, hash+".pid") }
-func LogPath(grvDir, hash string) string  { return filepath.Join(grvDir, hash+".log") }
+func SockPath(grvDir string) string { return filepath.Join(grvDir, "grv.sock") }
+func PIDPath(grvDir string) string  { return filepath.Join(grvDir, "grv.pid") }
+func LogPath(grvDir string) string  { return filepath.Join(grvDir, "grv.log") }

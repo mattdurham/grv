@@ -14,9 +14,8 @@ func StopDaemon(dir string) error {
 	if err != nil {
 		return fmt.Errorf("grv dir: %w", err)
 	}
-	hash := HashDir(dir)
-	pidPath := PIDPath(grvDir, hash)
-	sockPath := SockPath(grvDir, hash)
+	pidPath := PIDPath(grvDir)
+	sockPath := SockPath(grvDir)
 
 	data, err := os.ReadFile(pidPath)
 	if err != nil {

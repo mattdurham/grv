@@ -3,84 +3,67 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
-// DaemonStatus describes one running (or dead) daemon.
+// DaemonStatus describes the running (or dead) daemon.
 type DaemonStatus struct {
-	Hash     string
 	PIDPath  string
 	SockPath string
 	Alive    bool
 	PID      int
 }
 
-// ListDaemons returns status for all known daemons in ~/.grv/.
+// ListDaemons returns status for the single user-level daemon.
 func ListDaemons() ([]DaemonStatus, error) {
 	grvDir, err := GRVDir()
 	if err != nil {
 		return nil, fmt.Errorf("grv dir: %w", err)
 	}
 
-	entries, err := os.ReadDir(grvDir)
+	pidPath := PIDPath(grvDir)
+	sockPath := SockPath(grvDir)
+
+	data, err := os.ReadFile(pidPath)
 	if err != nil {
-		return nil, fmt.Errorf("read grv dir: %w", err)
+		return nil, nil // no daemon ever started
+	}
+	pidStr := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return nil, nil
 	}
 
-	var statuses []DaemonStatus
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pid") {
-			continue
-		}
-		hash := strings.TrimSuffix(entry.Name(), ".pid")
-		pidPath := filepath.Join(grvDir, entry.Name())
-		sockPath := SockPath(grvDir, hash)
-
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
-		}
-		pidStr := strings.TrimSpace(string(data))
-		pid, err := strconv.Atoi(pidStr)
-		if err != nil {
-			continue
-		}
-
-		alive := false
-		if proc, err := os.FindProcess(pid); err == nil {
-			alive = proc.Signal(syscall.Signal(0)) == nil
-		}
-
-		statuses = append(statuses, DaemonStatus{
-			Hash:     hash,
-			PIDPath:  pidPath,
-			SockPath: sockPath,
-			Alive:    alive,
-			PID:      pid,
-		})
+	alive := false
+	if proc, err := os.FindProcess(pid); err == nil {
+		alive = proc.Signal(syscall.Signal(0)) == nil
 	}
-	return statuses, nil
+
+	return []DaemonStatus{{
+		PIDPath:  pidPath,
+		SockPath: sockPath,
+		Alive:    alive,
+		PID:      pid,
+	}}, nil
 }
 
-// PrintStatus prints all daemon statuses to stdout.
+// PrintStatus prints daemon status to stdout.
 func PrintStatus() error {
 	statuses, err := ListDaemons()
 	if err != nil {
 		return err
 	}
 	if len(statuses) == 0 {
-		fmt.Println("no grv daemons running")
+		fmt.Println("no grv daemon running")
 		return nil
 	}
-	for _, s := range statuses {
-		state := "dead"
-		if s.Alive {
-			state = fmt.Sprintf("running (pid %d)", s.PID)
-		}
-		fmt.Printf("hash=%-8s  %-24s  sock=%s\n", s.Hash, state, s.SockPath)
+	s := statuses[0]
+	state := "dead"
+	if s.Alive {
+		state = fmt.Sprintf("running (pid %d)", s.PID)
 	}
+	fmt.Printf("%-24s  sock=%s\n", state, s.SockPath)
 	return nil
 }

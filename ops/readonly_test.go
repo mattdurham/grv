@@ -20,7 +20,7 @@ func resultJSON(t *testing.T, result json.RawMessage, err error) string {
 }
 
 func TestIsReadonly_NormalFile(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "test*.go")
+	f, err := os.CreateTemp(t.TempDir(), "test*.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,17 +39,17 @@ func TestIsReadonly_NormalFile(t *testing.T) {
 }
 
 func TestIsReadonly_VendorPath(t *testing.T) {
-	vendorPath := filepath.Join(t.TempDir(), "vendor", "pkg", "file.go")
+	vendorPath := filepath.Join(t.TempDir(), "vendor", "pkg", "data.txt")
 	if err := os.MkdirAll(filepath.Dir(vendorPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(vendorPath, []byte("package pkg\n"), 0644); err != nil {
+	if err := os.WriteFile(vendorPath, []byte("vendor data\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	_, writeErr := ops.HandleFileWrite(ops.FileWriteArgs{
 		File:    vendorPath,
-		Content: "package pkg // modified\n",
+		Content: "modified\n",
 		DryRun:  false,
 	})
 	if writeErr == nil {
@@ -78,17 +78,10 @@ func TestIsReadonly_GOROOTFile(t *testing.T) {
 	if _, err := os.Stat(stdlibFile); os.IsNotExist(err) {
 		t.Skip("stdlib file not found at", stdlibFile)
 	}
-
-	result, err := ops.HandleFileRead(ops.FileReadArgs{File: stdlibFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var resp ops.FileReadResult
-	if err := json.Unmarshal(result, &resp); err != nil {
-		t.Fatal(err)
-	}
-	if !resp.Readonly {
-		t.Errorf("expected readonly=true for GOROOT file %s", stdlibFile)
+	// .go files are blocked by file_read regardless of readonly status.
+	_, err := ops.HandleFileRead(ops.FileReadArgs{File: stdlibFile})
+	if err == nil {
+		t.Error("expected file_read to reject a .go file")
 	}
 }
 

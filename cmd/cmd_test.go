@@ -10,23 +10,11 @@ import (
 	"github.com/mattdurham/grv/cmd"
 )
 
-func TestHashDir(t *testing.T) {
-	// Same input → same output
-	h1 := cmd.HashDir("/some/dir")
-	h2 := cmd.HashDir("/some/dir")
-	if h1 != h2 {
-		t.Errorf("HashDir not deterministic: %q != %q", h1, h2)
-	}
-	// 8 characters
-	if len(h1) != 8 {
-		t.Errorf("expected 8-char hash, got %q (len %d)", h1, len(h1))
-	}
-	// Different inputs → different outputs
-	h3 := cmd.HashDir("/other/dir")
-	if h1 == h3 {
-		t.Error("expected different hashes for different paths")
-	}
-}
+// Same input → same output
+
+// 8 characters
+
+// Different inputs → different outputs
 
 func TestGRVDir(t *testing.T) {
 	d, err := cmd.GRVDir()
@@ -41,25 +29,17 @@ func TestGRVDir(t *testing.T) {
 		t.Errorf("GRVDir should create the directory: %v", err)
 	}
 }
-
 func TestPathFunctions(t *testing.T) {
-	hash := "abcd1234"
 	dir := "/tmp/grv"
-
-	sock := cmd.SockPath(dir, hash)
+	sock := cmd.SockPath(dir)
 	if !strings.HasSuffix(sock, ".sock") {
 		t.Errorf("SockPath: expected .sock suffix, got %q", sock)
 	}
-	if !strings.Contains(sock, hash) {
-		t.Errorf("SockPath: expected hash in path, got %q", sock)
-	}
-
-	pid := cmd.PIDPath(dir, hash)
+	pid := cmd.PIDPath(dir)
 	if !strings.HasSuffix(pid, ".pid") {
 		t.Errorf("PIDPath: expected .pid suffix, got %q", pid)
 	}
-
-	log := cmd.LogPath(dir, hash)
+	log := cmd.LogPath(dir)
 	if !strings.HasSuffix(log, ".log") {
 		t.Errorf("LogPath: expected .log suffix, got %q", log)
 	}
@@ -296,22 +276,3 @@ func TestPrintHelp_SpecificTool(t *testing.T) {
 }
 
 // ---- HashDir ----
-
-func TestHashDir_Deterministic(t *testing.T) {
-	h1 := cmd.HashDir("/some/path")
-	h2 := cmd.HashDir("/some/path")
-	if h1 != h2 {
-		t.Errorf("HashDir not deterministic: %q vs %q", h1, h2)
-	}
-	if len(h1) != 8 {
-		t.Errorf("expected 8-char hash, got %q (len %d)", h1, len(h1))
-	}
-}
-
-func TestHashDir_DifferentPaths(t *testing.T) {
-	h1 := cmd.HashDir("/path/a")
-	h2 := cmd.HashDir("/path/b")
-	if h1 == h2 {
-		t.Error("different paths should produce different hashes")
-	}
-}

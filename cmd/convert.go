@@ -296,12 +296,10 @@ func resolveSock(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hash := HashDir(dir)
-	sock := SockPath(grvDir, hash)
 	if err := StartDaemon(dir); err != nil {
 		return "", fmt.Errorf("start daemon: %w", err)
 	}
-	return sock, nil
+	return SockPath(grvDir), nil
 }
 
 // ---- Pass 2: structural reorganisation ----
@@ -333,10 +331,14 @@ func reorganisePackage(sockPath, pkgDir string, alreadyMoved map[string]bool) (m
 	}
 	var dirResult struct {
 		GoFiles []struct {
-			File       string `json:"file"`
-			Readonly   bool   `json:"readonly"`
-			Structs    []struct{ Name string `json:"name"` } `json:"structs"`
-			Interfaces []struct{ Name string `json:"name"` } `json:"interfaces"`
+			File     string `json:"file"`
+			Readonly bool   `json:"readonly"`
+			Structs  []struct {
+				Name string `json:"name"`
+			} `json:"structs"`
+			Interfaces []struct {
+				Name string `json:"name"`
+			} `json:"interfaces"`
 		} `json:"go_files"`
 	}
 	if err := json.Unmarshal(resp, &dirResult); err != nil {
@@ -368,7 +370,9 @@ func reorganisePackage(sockPath, pkgDir string, alreadyMoved map[string]bool) (m
 
 type nameHolder interface{ getName() string }
 
-func asNames(items []struct{ Name string `json:"name"` }) []string {
+func asNames(items []struct {
+	Name string `json:"name"`
+}) []string {
 	names := make([]string, len(items))
 	for i, v := range items {
 		names[i] = v.Name
@@ -424,7 +428,9 @@ func moveType(sockPath, pkgDir, sourceFile, name string) (bool, string) {
 	if err != nil {
 		return false, ""
 	}
-	var pr struct{ File string `json:"file"` }
+	var pr struct {
+		File string `json:"file"`
+	}
 	if err := json.Unmarshal(placeResp, &pr); err != nil {
 		return false, ""
 	}

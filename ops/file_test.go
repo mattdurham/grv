@@ -20,7 +20,11 @@ func fileText(t *testing.T, result json.RawMessage, err error) string {
 }
 
 func TestHandleFileRead_Basic(t *testing.T) {
-	result, err := ops.HandleFileRead(ops.FileReadArgs{File: testdataSimple})
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(path, []byte("hello file_read\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ops.HandleFileRead(ops.FileReadArgs{File: path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,14 +33,23 @@ func TestHandleFileRead_Basic(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !strings.Contains(resp.Content, "package testdata") {
-		t.Errorf("expected Go source content, got: %q...", resp.Content[:50])
+	if !strings.Contains(resp.Content, "hello file_read") {
+		t.Errorf("unexpected content: %q", resp.Content)
 	}
 	if resp.Size <= 0 {
 		t.Errorf("expected size > 0, got %d", resp.Size)
 	}
 	if resp.Readonly {
-		t.Errorf("expected readonly=false for testdata file")
+		t.Errorf("expected readonly=false for temp file")
+	}
+}
+
+func TestHandleFileRead_GoFileRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.go")
+	os.WriteFile(path, []byte("package main\n"), 0644)
+	_, err := ops.HandleFileRead(ops.FileReadArgs{File: path})
+	if err == nil {
+		t.Error("expected file_read to reject .go file")
 	}
 }
 

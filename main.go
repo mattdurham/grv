@@ -170,8 +170,7 @@ func sendAndPrint(toolName string, argsJSON json.RawMessage) {
 	if err != nil {
 		log.Fatalf("grv dir: %v", err)
 	}
-	hash := cmd.HashDir(dir)
-	sockPath := cmd.SockPath(grvDir, hash)
+	sockPath := cmd.SockPath(grvDir)
 
 	result, err := cmd.SendRequest(sockPath, toolName, argsJSON)
 	if err != nil {

@@ -611,6 +611,12 @@ func stepValue(current ast.Node, step PathStep, idx int) (ast.Node, ParentContex
 		return n.Value, ParentContext{Parent: n, FieldName: "Value", Index: -1}, nil
 	case *ast.SendStmt:
 		return n.Value, ParentContext{Parent: n, FieldName: "Value", Index: -1}, nil
+	case *ast.GenDecl:
+		if len(n.Specs) == 1 {
+			if vs, ok := n.Specs[0].(*ast.ValueSpec); ok && len(vs.Values) > 0 {
+				return vs.Values[0], ParentContext{Parent: vs, FieldName: "Values", Index: 0}, nil
+			}
+		}
 	}
 	return nil, ParentContext{}, &NavigateError{AtStep: idx, Step: step}
 }

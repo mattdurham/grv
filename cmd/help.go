@@ -226,14 +226,14 @@ var ToolRegistry = []ToolInfo{
 	},
 	{
 		Name: "file_read",
-		Desc: "Read any file (not just Go) with readonly detection",
+		Desc: "Read any non-Go file",
 		Args: []ArgInfo{
 			{Name: "file", Type: "string", Required: true, Desc: "Path to file"},
 		},
 	},
 	{
 		Name: "file_write",
-		Desc: "Write content to any file with diff output",
+		Desc: "Write content to any non-Go file",
 		Args: []ArgInfo{
 			{Name: "file", Type: "string", Required: true, Desc: "Path to file"},
 			{Name: "content", Type: "string", Required: true, Desc: "New file content"},

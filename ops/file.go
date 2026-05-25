@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mattdurham/grv/diff"
 	"github.com/mattdurham/grv/editor"
@@ -27,6 +28,10 @@ type FileReadResult struct {
 func HandleFileRead(args FileReadArgs) (json.RawMessage, error) {
 	if args.File == "" {
 		return errResult("file is required")
+	}
+	if strings.HasSuffix(args.File, ".go") {
+		return errResult("file_read does not accept .go files; use ast_* tools instead")
+
 	}
 	content, err := os.ReadFile(args.File)
 	if err != nil {
@@ -57,6 +62,10 @@ type FileWriteResult struct {
 func HandleFileWrite(args FileWriteArgs) (json.RawMessage, error) {
 	if args.File == "" {
 		return errResult("file is required")
+	}
+	if strings.HasSuffix(args.File, ".go") {
+		return errResult("file_write does not accept .go files; use ast_* tools instead")
+
 	}
 	if isReadonly(args.File) {
 		return errResult(fmt.Sprintf("file is readonly: %s", args.File))

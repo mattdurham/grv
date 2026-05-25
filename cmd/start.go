@@ -35,10 +35,10 @@ func StartDaemon(dir string) error {
 	if err != nil {
 		return fmt.Errorf("grv dir: %w", err)
 	}
-	hash := HashDir(dir)
-	sockPath := SockPath(grvDir, hash)
-	pidPath := PIDPath(grvDir, hash)
-	logPath := LogPath(grvDir, hash)
+
+	sockPath := SockPath(grvDir)
+	pidPath := PIDPath(grvDir)
+	logPath := LogPath(grvDir)
 
 	if IsRunning(sockPath, pidPath) {
 		return nil
