@@ -5,7 +5,6 @@ package ops
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -19,7 +18,7 @@ func isReadonly(filePath string) bool {
 	if strings.Contains(abs, "/vendor/") {
 		return true
 	}
-	if strings.HasPrefix(abs, runtime.GOROOT()) {
+	if goroot := os.Getenv("GOROOT"); goroot != "" && strings.HasPrefix(abs, goroot) {
 		return true
 	}
 	gomod := os.Getenv("GOMODCACHE")

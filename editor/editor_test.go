@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mattdurham/grv/editor"
@@ -196,6 +197,129 @@ func TestWriteAtomic_ReadonlyDir(t *testing.T) {
 	err := editor.WriteAtomic(path, []byte("package p\n"))
 	if err == nil {
 		t.Error("expected error writing to readonly dir, got nil")
+	}
+}
+
+// TestEdit_CommentsPreservedOnUnmodifiedNodes verifies that doc and field
+// comments on nodes untouched by the mutation survive formatting.
+func TestEdit_CommentsPreservedOnUnmodifiedNodes(t *testing.T) {
+	path := copyTestFile(t, "../testdata/commented.go")
+
+	// Mutation: rename Validate → Check. Config, NewConfig, and their comments
+	// are untouched and must survive.
+	_, err := editor.Edit(path, false, func(f *ast.File, fset *token.FileSet) error {
+		ast.Inspect(f, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == "Validate" {
+				id.Name = "Check"
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(content)
+
+	for _, want := range []string{
+		"// Config holds application settings.",
+		"// Host is the server hostname.",
+		"// Port is the listening port.",
+		"// Timeout in seconds.",
+		"// NewConfig returns a default Config.",
+		"// Validate checks that the config is valid.", // comment text unchanged, only ident renamed
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("comment missing after edit: %q", want)
+		}
+	}
+}
+
+// TestEdit_DocCommentSurvivesBodyReplacement verifies that a function's doc
+// comment survives when its body is replaced entirely.
+func TestEdit_DocCommentSurvivesBodyReplacement(t *testing.T) {
+	path := copyTestFile(t, "../testdata/commented.go")
+
+	_, err := editor.Edit(path, false, func(f *ast.File, fset *token.FileSet) error {
+		ast.Inspect(f, func(n ast.Node) bool {
+			fd, ok := n.(*ast.FuncDecl)
+			if !ok || fd.Name.Name != "Validate" {
+				return true
+			}
+			// Replace body with `return true` unconditionally.
+			fd.Body.List = []ast.Stmt{
+				&ast.ReturnStmt{
+					Results: []ast.Expr{
+						&ast.Ident{Name: "true"},
+					},
+				},
+			}
+			return false
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(content)
+
+	if !strings.Contains(src, "// Validate checks that the config is valid.") {
+		t.Error("doc comment on Validate lost after body replacement")
+	}
+	if !strings.Contains(src, "// Config holds application settings.") {
+		t.Error("Config doc comment lost after unrelated function body replacement")
+	}
+}
+
+// TestEdit_FieldCommentsAfterNewField verifies that existing field comments
+// survive when a new field (with no position) is inserted into a struct.
+func TestEdit_FieldCommentsAfterNewField(t *testing.T) {
+	path := copyTestFile(t, "../testdata/commented.go")
+
+	_, err := editor.Edit(path, false, func(f *ast.File, fset *token.FileSet) error {
+		ast.Inspect(f, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != "Config" {
+				return true
+			}
+			st := ts.Type.(*ast.StructType)
+			st.Fields.List = append(st.Fields.List, &ast.Field{
+				Names: []*ast.Ident{{Name: "Debug"}},
+				Type:  &ast.Ident{Name: "bool"},
+			})
+			return false
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(content)
+
+	for _, want := range []string{
+		"// Host is the server hostname.",
+		"// Port is the listening port.",
+		"// Timeout in seconds.",
+		"Debug",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("expected %q in output after field insert", want)
+		}
 	}
 }
 

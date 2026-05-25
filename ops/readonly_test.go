@@ -5,19 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/mattdurham/grv/ops"
 )
-
-func resultJSON(t *testing.T, result json.RawMessage, err error) string {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("tool returned error: %v", err)
-	}
-	return string(result)
-}
 
 func TestIsReadonly_NormalFile(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "test*.txt")
@@ -70,7 +61,7 @@ func TestIsReadonly_VendorPath(t *testing.T) {
 }
 
 func TestIsReadonly_GOROOTFile(t *testing.T) {
-	goroot := runtime.GOROOT()
+	goroot := os.Getenv("GOROOT")
 	if goroot == "" {
 		t.Skip("GOROOT not set")
 	}

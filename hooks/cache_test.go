@@ -129,3 +129,66 @@ func TestCache_InvalidateDoesNotAffectOtherFile(t *testing.T) {
 		t.Error("fileB should still be cached")
 	}
 }
+func TestGitHashCache_Miss(t *testing.T) {
+	c := NewGitHashCache()
+	result, ok := c.Get("hook", "/abs/file.go", "abc123")
+	if ok || result != nil {
+		t.Errorf("expected miss, got ok=%v result=%v", ok, result)
+	}
+}
+func TestGitHashCache_SetThenGet_SameHash(t *testing.T) {
+	c := NewGitHashCache()
+	data := map[string]interface {
+	}{"key": "val"}
+	c.Set("hook", "/abs/file.go", "abc123", data)
+	result, ok := c.Get("hook", "/abs/file.go", "abc123")
+	if !ok {
+		t.Fatal("expected hit")
+	}
+	if result["key"] != "val" {
+		t.Errorf("result[key]: want val, got %v", result["key"])
+	}
+}
+func TestGitHashCache_Get_DifferentHash(t *testing.T) {
+	c := NewGitHashCache()
+	data := map[string]interface {
+	}{"k": "v"}
+	c.Set("hook", "/f.go", "hashA", data)
+	_, ok1 := c.Get("hook", "/f.go", "hashB")
+	if ok1 {
+		t.Error("get with hashB: expected miss")
+	}
+	_, ok2 := c.Get("hook", "/f.go", "hashA")
+	if ok2 {
+		t.Error("get with hashA after eviction: expected miss")
+	}
+}
+func TestGitHashCache_Invalidate_ClearsFile(t *testing.T) {
+	c := NewGitHashCache()
+	data := map[string]interface {
+	}{}
+	c.Set("hookA", "/f.go", "h1", data)
+	c.Set("hookB", "/f.go", "h1", data)
+	c.Invalidate("/f.go")
+	_, okA := c.Get("hookA", "/f.go", "h1")
+	_, okB := c.Get("hookB", "/f.go", "h1")
+	if okA || okB {
+		t.Errorf("after Invalidate: hookA=%v hookB=%v, both should be false", okA, okB)
+	}
+}
+func TestGitHashCache_Invalidate_PreservesOtherFile(t *testing.T) {
+	c := NewGitHashCache()
+	data := map[string]interface {
+	}{}
+	c.Set("hook", "/fileA.go", "h1", data)
+	c.Set("hook", "/fileB.go", "h1", data)
+	c.Invalidate("/fileA.go")
+	_, okA := c.Get("hook", "/fileA.go", "h1")
+	_, okB := c.Get("hook", "/fileB.go", "h1")
+	if okA {
+		t.Error("fileA should be evicted")
+	}
+	if !okB {
+		t.Error("fileB should still be cached")
+	}
+}

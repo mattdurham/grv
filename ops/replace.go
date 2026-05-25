@@ -35,6 +35,9 @@ func HandleASTReplace(args ASTReplaceArgs) (json.RawMessage, error) {
 	if err != nil {
 		return errResult(fmt.Sprintf("parse node: %v", err))
 	}
+	if kindNode == nil {
+		return errResult("node must not be null or empty")
+	}
 
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, _ *token.FileSet) error {
 		_, parentCtx, navErr := selector.Navigate(f, steps)

@@ -9,15 +9,23 @@ import (
 	"time"
 )
 
+type HookConfig struct
+
 // HookConfig describes a single configured hook.
-type HookConfig struct {
-	Name    string
-	Command []string
-	Scope   string        // "file" | "all"
-	Cache   bool
-	Timeout time.Duration // default 5s if zero after parsing
-	Kinds   []string      // optional kind filter
+{
+	Name      string
+	Command   []string
+	Scope     string
+	Cache     bool
+	Immutable bool
+	Timeout   time.Duration
+	Kinds     []string
 }
+
+// "file" | "all"
+
+// default 5s if zero after parsing
+// optional kind filter
 
 // LoadConfig searches for a goast.toml config file starting at dir, then walking
 // up to the go.mod root, then checking ~/.grv/config.toml.
@@ -105,6 +113,8 @@ func parseGRVTOML(data []byte) ([]HookConfig, error) {
 		}
 
 		switch key {
+		case "immutable":
+			current.Immutable = strings.TrimSpace(value) == "true"
 		case "name":
 			current.Name = unquote(value)
 		case "command":

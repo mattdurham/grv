@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mattdurham/grv/cmd"
@@ -190,6 +189,10 @@ func parseToolFlags(args []string) json.RawMessage {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--") {
+			if _, exists := m["namespace"]; !exists {
+				b, _ := json.Marshal(arg)
+				m["namespace"] = b
+			}
 			continue
 		}
 		key := strings.TrimPrefix(arg, "--")
@@ -221,10 +224,3 @@ func parseToolFlags(args []string) json.RawMessage {
 	return result
 }
 
-func abs(path string) string {
-	a, err := filepath.Abs(path)
-	if err != nil {
-		return path
-	}
-	return a
-}

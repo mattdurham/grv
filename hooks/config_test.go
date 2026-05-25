@@ -188,3 +188,34 @@ scope   = "file"
 		t.Errorf("expected 'valid', got %q", configs[0].Name)
 	}
 }
+func TestLoadConfig_ImmutableField(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[[hooks]]
+name      = "lth"
+command   = ["echo", "hi"]
+scope     = "file"
+immutable = true
+
+[[hooks]]
+name    = "echo"
+command = ["echo", "bye"]
+scope   = "file"
+`
+	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configs, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig error: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("expected 2 hooks, got %d", len(configs))
+	}
+	if !configs[0].Immutable {
+		t.Error("Immutable: want true for first hook")
+	}
+	if configs[1].Immutable {
+		t.Error("Immutable: want false for second hook")
+	}
+}

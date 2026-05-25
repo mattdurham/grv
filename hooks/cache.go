@@ -79,3 +79,53 @@ func (c *Cache) Invalidate(absFilePath string) {
 		}
 	}
 }
+
+type gitCacheEntry struct {
+	result map[string]interface {
+	}
+	gitHash string
+}
+type GitHashCache struct {
+	mu      sync.RWMutex
+	entries map[cacheKey]gitCacheEntry
+}
+
+func NewGitHashCache() *GitHashCache {
+	return &GitHashCache{entries: make(map[cacheKey]gitCacheEntry)}
+}
+func (c *GitHashCache) Get(hookName, absFilePath, currentHash string) (map[string]interface {
+}, bool) {
+	k := cacheKey{hookName: hookName, absFilePath: absFilePath}
+	c.mu.RLock()
+	entry, found := c.entries[k]
+	c.mu.RUnlock()
+	if !found {
+		return nil, false
+	}
+	if entry.gitHash == currentHash {
+		return entry.result, true
+	}
+	c.mu.Lock()
+	if current, ok := c.entries[k]; ok && current.gitHash != currentHash {
+		delete(c.entries, k)
+	}
+	c.mu.Unlock()
+	return nil, false
+}
+
+func (c *GitHashCache) Set(hookName, absFilePath, gitHash string, result map[string]interface {
+}) {
+	k := cacheKey{hookName: hookName, absFilePath: absFilePath}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[k] = gitCacheEntry{result: result, gitHash: gitHash}
+}
+func (c *GitHashCache) Invalidate(absFilePath string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.entries {
+		if k.absFilePath == absFilePath {
+			delete(c.entries, k)
+		}
+	}
+}

@@ -726,7 +726,7 @@ func F() { fmt.Println("hello", "world") }`)
 
 	// Also check second arg
 	steps[4] = selector.PathStep{Kind: "Args", Index: pInt(1)}
-	node, ctx, err = selector.Navigate(f, steps)
+	_, ctx, err = selector.Navigate(f, steps)
 	if err != nil {
 		t.Fatalf("Navigate args[1]: %v", err)
 	}

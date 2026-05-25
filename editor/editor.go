@@ -33,6 +33,10 @@ func Edit(path string, dryRun bool, fn func(*ast.File, *token.FileSet) error) (R
 		return Result{}, err
 	}
 
+	// Reattach comments to nodes still present after mutation. Without this,
+	// go/format misplaces comments whose associated nodes shifted position.
+	f.Comments = ast.NewCommentMap(fset, f, f.Comments).Filter(f).Comments()
+
 	var buf bytes.Buffer
 	if err := format.Node(&buf, fset, f); err != nil {
 		return Result{}, fmt.Errorf("format: %w", err)

@@ -1193,13 +1193,6 @@ func TestHandleASTReplace_ExprStmt_X(t *testing.T) {
 }
 
 func TestHandleASTReplace_SwitchStmt_Tag(t *testing.T) {
-	tmpFile := copyToTemp(t, testdataSimple)
-	// TypeCheck → Body → TypeSwitchStmt[0] — but TypeSwitchStmt doesn't have Tag (it has Assign)
-	// SafeDivide → Body → IfStmt[0] → Tag doesn't exist on IfStmt
-	// We need a SwitchStmt with a Tag. TypeCheck uses type switch not regular switch.
-	// Actually simple.go doesn't have a regular switch with tag at top level...
-	// Wait, TypeCheck has switch x := v.(type) which is TypeSwitchStmt
-	// Let's write a temporary file with a regular switch
 	dir := t.TempDir()
 	src := []byte(`package p
 
@@ -1210,7 +1203,7 @@ func F(x int) {
 	}
 }
 `)
-	tmpFile = dir + "/switch.go"
+	tmpFile := dir + "/switch.go"
 	if err := os.WriteFile(tmpFile, src, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -3599,3 +3592,4 @@ func TestHandleASTReplace_BinaryExpr_TypeMismatch(t *testing.T) {
 		t.Error("expected tool error for type mismatch (Expr replaced by Stmt)")
 	}
 }
+

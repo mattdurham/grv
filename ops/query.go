@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mattdurham/grv/editor"
 	"github.com/mattdurham/grv/kinds"
@@ -66,6 +68,7 @@ func okResult(v any) (json.RawMessage, error) {
 // ASTListArgs is the argument struct for ast_list.
 type ASTListArgs struct {
 	File string `json:"file"`
+	Dir  string `json:"dir,omitempty"`
 }
 
 // ASTListItem is one entry in the ast_list response.
@@ -81,6 +84,9 @@ type ASTListItem struct {
 
 // HandleASTList implements the ast_list tool.
 func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
+	if args.Dir != "" && args.File == "" {
+		return handleASTListDir(args.Dir)
+	}
 	f, fset, _, err := editor.ParseFile(args.File)
 	if err != nil {
 		return errResult(fmt.Sprintf("parse: %v", err))
@@ -311,4 +317,30 @@ func HandleASTMeta(args ASTMetaArgs) (json.RawMessage, error) {
 	m := meta.Compute(fset, src, node, nil, len(steps))
 	m = mergeHookMeta(m, args.File, args.Hooks)
 	return okResult(m)
+}
+
+func handleASTListDir(dir string) (json.RawMessage, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return errResult(fmt.Sprintf("read dir: %v", err))
+	}
+	var merged []ASTListItem
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		result, err := HandleASTList(ASTListArgs{File: filepath.Join(dir, e.Name())})
+		if err != nil {
+			continue
+		}
+		var items []ASTListItem
+		if err := json.Unmarshal(result, &items); err != nil {
+			continue
+		}
+		merged = append(merged, items...)
+	}
+	if merged == nil {
+		merged = []ASTListItem{}
+	}
+	return okResult(merged)
 }

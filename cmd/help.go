@@ -26,16 +26,20 @@ type ToolInfo struct {
 var ToolRegistry = []ToolInfo{
 	{
 		Name: "ast_list",
-		Desc: "List all top-level declarations in a Go file",
+		Desc: "List all top-level declarations in a package or file",
 		Args: []ArgInfo{
-			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
+			{Name: "namespace", Type: "string", Required: false, Desc: "Package name (e.g. 'hooks') or 'pkg#Decl' to list one file; use single quotes to protect #"},
+			{Name: "file", Type: "string", Required: false, Desc: "Path to Go source file (alternative to namespace)"},
+			{Name: "dir", Type: "string", Required: false, Desc: "Directory path to list all declarations (alternative to namespace)"},
 		},
+		Notes: "Provide namespace, file, or dir. namespace routes to dir or file automatically.",
 	},
 	{
 		Name: "ast_query",
 		Desc: "Return the JSON node tree at a selector path",
 		Args: []ArgInfo{
-			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
+			{Name: "namespace", Type: "string", Required: false, Desc: "Package and declaration (e.g. 'hooks#RunFile'); use single quotes to protect #"},
+			{Name: "file", Type: "string", Required: false, Desc: "Path to Go source file (alternative to namespace)"},
 			{Name: "path", Type: "[]step", Required: true, Desc: "Selector path to the node (empty for file-level info)"},
 		},
 	},
@@ -178,7 +182,8 @@ var ToolRegistry = []ToolInfo{
 		Name: "ast_directory",
 		Desc: "Inventory all Go and non-Go files in a directory",
 		Args: []ArgInfo{
-			{Name: "dir", Type: "string", Required: true, Desc: "Directory to inventory"},
+			{Name: "namespace", Type: "string", Required: false, Desc: "Package name (e.g. 'hooks' or '.'); routed to dir automatically"},
+			{Name: "dir", Type: "string", Required: false, Desc: "Directory path (alternative to namespace)"},
 		},
 	},
 	{
