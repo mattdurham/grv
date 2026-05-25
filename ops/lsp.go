@@ -241,10 +241,9 @@ type ASTNodeAtArgs struct {
 
 // ASTNodeAtResponse is the response for ast_node_at.
 type ASTNodeAtResponse struct {
-	Path   []selector.PathStep `json:"path"`
-	Node   json.RawMessage     `json:"node"`
-	Source string              `json:"source,omitempty"`
-	Meta   meta.Meta           `json:"meta,omitempty"`
+	Path []selector.PathStep `json:"path"`
+	Node json.RawMessage     `json:"node"`
+	Meta meta.Meta           `json:"meta,omitempty"`
 }
 
 // HandleASTNodeAt implements the ast_node_at tool.
@@ -298,15 +297,8 @@ func HandleASTNodeAt(args ASTNodeAtArgs) (json.RawMessage, error) {
 		return errResult(fmt.Sprintf("marshal node: %v", err))
 	}
 
-	var sourceFrag string
-	pos := fset.Position(best.Pos())
-	end := fset.Position(best.End())
-	if pos.IsValid() && end.IsValid() && end.Offset <= len(src) {
-		sourceFrag = string(src[pos.Offset:end.Offset])
-	}
-
 	m := meta.Compute(fset, src, best, nil, len(nodePath))
-	resp := ASTNodeAtResponse{Path: nodePath, Node: nodeJSON, Source: sourceFrag, Meta: m}
+	resp := ASTNodeAtResponse{Path: nodePath, Node: nodeJSON, Meta: m}
 	return okResult(resp)
 }
 
@@ -463,11 +455,10 @@ type ASTFindArgs struct {
 
 // FindResult is one entry in the ast_find response.
 type FindResult struct {
-	File   string              `json:"file"`
-	Path   []selector.PathStep `json:"path"`
-	Node   json.RawMessage     `json:"node"`
-	Source string              `json:"source,omitempty"`
-	Meta   meta.Meta           `json:"meta,omitempty"`
+	File string              `json:"file"`
+	Path []selector.PathStep `json:"path"`
+	Node json.RawMessage     `json:"node"`
+	Meta meta.Meta           `json:"meta,omitempty"`
 }
 
 // HandleASTFind implements the ast_find tool.
@@ -535,19 +526,12 @@ func findInFile(f *ast.File, fset *token.FileSet, src []byte, filePath string, p
 			return true
 		}
 		nodePath := buildPath(n, ancestors)
-		var sourceFrag string
-		pos := fset.Position(n.Pos())
-		end := fset.Position(n.End())
-		if pos.IsValid() && end.IsValid() && end.Offset <= len(src) {
-			sourceFrag = string(src[pos.Offset:end.Offset])
-		}
 		m := meta.Compute(fset, src, n, nil, len(nodePath))
 		results = append(results, FindResult{
-			File:   filePath,
-			Path:   nodePath,
-			Node:   nodeJSON,
-			Source: sourceFrag,
-			Meta:   m,
+			File: filePath,
+			Path: nodePath,
+			Node: nodeJSON,
+			Meta: m,
 		})
 		return true
 	}, nil)

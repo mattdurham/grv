@@ -1332,4 +1332,4 @@ func isReadonly(filePath string) bool {
 
 1. Should `ast_rename` update string literals containing the identifier? Probably not — too ambiguous.
 2. Files with build tags: parse with `parser.ParseComments`, ignore tags — they're irrelevant for structural edits.
-3. Should `ast_query` also return the source text alongside the node tree, for human readability? Yes — include `"source"` field in response.
+3. Should `ast_query` return source text alongside the node tree? No — grv never returns raw source in any response. The AST node tree is the sole representation.
