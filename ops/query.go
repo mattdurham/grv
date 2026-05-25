@@ -180,7 +180,6 @@ type ASTQueryArgs struct {
 // ASTQueryResponse is the response for ast_query.
 type ASTQueryResponse struct {
 	Node      json.RawMessage `json:"node"`
-	Source    string          `json:"source,omitempty"`
 	Namespace string          `json:"namespace,omitempty"` // <import-path>#<DeclName>
 	Readonly  bool            `json:"readonly"`
 	Meta      meta.Meta       `json:"meta,omitempty"`
@@ -228,13 +227,6 @@ func HandleASTQuery(args ASTQueryArgs) (json.RawMessage, error) {
 		resp.Namespace = packageImportPath(filepath.Dir(args.File)) + "#" + name
 	}
 
-	// Extract source text
-	pos := fset.Position(node.Pos())
-	end := fset.Position(node.End())
-	if pos.IsValid() && end.IsValid() && end.Offset <= len(src) {
-		resp.Source = string(src[pos.Offset:end.Offset])
-	}
-
 	// Compute metadata
 	resp.Meta = meta.Compute(fset, src, node, nil, len(steps))
 	resp.Meta = mergeHookMeta(resp.Meta, args.File, nil)
@@ -276,11 +268,6 @@ func HandleASTQueryMany(args ASTQueryManyArgs) (json.RawMessage, error) {
 		}
 
 		resp := ASTQueryResponse{Node: nodeJSON}
-		pos := fset.Position(node.Pos())
-		end := fset.Position(node.End())
-		if pos.IsValid() && end.IsValid() && end.Offset <= len(src) {
-			resp.Source = string(src[pos.Offset:end.Offset])
-		}
 		resp.Meta = meta.Compute(fset, src, node, nil, len(steps))
 		results = append(results, resp)
 	}

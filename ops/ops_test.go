@@ -113,11 +113,6 @@ func TestHandleASTQuery(t *testing.T) {
 		t.Errorf("node kind: got %q, want FuncDecl", peek.Kind)
 	}
 
-	// Verify source is populated
-	if !strings.Contains(resp.Source, "Add") {
-		t.Errorf("source should contain Add, got: %q", resp.Source)
-	}
-
 	// Verify meta is populated
 	if resp.Meta["line"] == nil {
 		t.Error("meta.line should be present")

@@ -237,7 +237,6 @@ type ASTFindDefResponse struct {
 	File     string              `json:"file"`
 	Path     []selector.PathStep `json:"path,omitempty"`
 	Node     json.RawMessage     `json:"node,omitempty"`
-	Source   string              `json:"source,omitempty"`
 	Meta     meta.Meta           `json:"meta,omitempty"`
 	External bool                `json:"external,omitempty"`
 	Package  string              `json:"package,omitempty"`
@@ -281,17 +280,10 @@ func HandleASTFindDef(args ASTFindDefArgs) (json.RawMessage, error) {
 		if navErr != nil {
 			return errResult(navErr.Error())
 		}
-		pos := fset.Position(node.Pos())
-		end := fset.Position(node.End())
-		var source string
-		if pos.IsValid() && end.IsValid() && end.Offset <= len(src) {
-			source = string(src[pos.Offset:end.Offset])
-		}
 		m := meta.Compute(fset, src, node, nil, len(steps))
 		resp := ASTFindDefResponse{
-			File:   args.File,
-			Source: source,
-			Meta:   m,
+			File: args.File,
+			Meta: m,
 		}
 		return okResult(resp)
 	}
