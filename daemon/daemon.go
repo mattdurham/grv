@@ -185,6 +185,12 @@ func (s *Server) dispatchRequest(req Request) Response {
 		msg := fmt.Sprintf("unknown tool: %q", req.Tool)
 		return Response{Error: &msg}
 	}
+	resolvedArgs, resolveErr := s.resolveNamespace(req.Tool, req.Args)
+	if resolveErr != nil {
+		msg := resolveErr.Error()
+		return Response{Error: &msg}
+	}
+	req.Args = resolvedArgs
 	result, err := handler(req.Args)
 	if err != nil {
 		msg := err.Error()
@@ -197,7 +203,6 @@ func (s *Server) dispatchRequest(req Request) Response {
 	}
 	return Response{Result: result}
 }
-
 
 // writeTools is the set of tools that modify file content.
 var writeTools = map[string]bool{

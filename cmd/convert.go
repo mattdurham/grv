@@ -368,8 +368,6 @@ func reorganisePackage(sockPath, pkgDir string, alreadyMoved map[string]bool) (m
 	return moved, errs
 }
 
-type nameHolder interface{ getName() string }
-
 func asNames(items []struct {
 	Name string `json:"name"`
 }) []string {
