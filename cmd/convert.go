@@ -93,31 +93,18 @@ func FormatConvertReport(dir string, r *ConvertResult, _ bool) string {
 	return sb.String()
 }
 
-// readFileContent reads a file's content via the daemon.
-func readFileContent(sockPath, fullPath string) (string, error) {
-	readArgs, _ := json.Marshal(map[string]string{"file": fullPath})
-	resp, err := SendRequest(sockPath, "file_read", readArgs)
+// readFileContent reads a file's content directly from disk.
+func readFileContent(_ string, fullPath string) (string, error) {
+	b, err := os.ReadFile(fullPath)
 	if err != nil {
 		return "", err
 	}
-	var result struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", err
-	}
-	return result.Content, nil
+	return string(b), nil
 }
 
-// writeFileContent writes content to a file via the daemon.
-func writeFileContent(sockPath, fullPath, content string) error {
-	writeArgs, _ := json.Marshal(map[string]interface{}{
-		"file":    fullPath,
-		"content": content,
-		"dry_run": false,
-	})
-	_, err := SendRequest(sockPath, "file_write", writeArgs)
-	return err
+// writeFileContent writes content to a file directly to disk.
+func writeFileContent(_ string, fullPath, content string) error {
+	return os.WriteFile(fullPath, []byte(content), 0644)
 }
 
 // convertGoFile parses a .go file into AST, formats via go/format, rewrites if changed.
