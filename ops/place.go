@@ -52,6 +52,9 @@ func HandleASTPlace(args ASTPlaceArgs) (json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse node: %w", err)
 	}
+	if kindNode == nil {
+		return nil, fmt.Errorf("node is required")
+	}
 	newDecl, err := kindNode.ToAST()
 	if err != nil {
 		return nil, fmt.Errorf("ToAST: %w", err)

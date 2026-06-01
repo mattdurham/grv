@@ -60,6 +60,9 @@ func HandleASTInsert(args ASTInsertArgs) (json.RawMessage, error) {
 	if err != nil {
 		return errResult(fmt.Sprintf("parse node: %v", err))
 	}
+	if kindNode == nil {
+		return errResult("node is required")
+	}
 
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, _ *token.FileSet) error {
 		target, parentCtx, navErr := selector.Navigate(f, steps)
