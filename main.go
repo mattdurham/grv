@@ -186,10 +186,7 @@ func sendAndPrint(toolName string, argsJSON json.RawMessage, format string) {
 		os.Exit(1)
 	}
 	if format == "tree" && isASTTool(toolName) {
-		if out, err := treeformat.Marshal(
-
-			// error response struct: Marshal never fails
-			result); err == nil {
+		if out, err := treeformat.Marshal(result); err == nil {
 			fmt.Println(string(out))
 			return
 		}
@@ -236,19 +233,15 @@ func parseToolFlags(args []string) json.RawMessage {
 				continue
 			}
 		}
-		if key == "node" && !
-
-		// Otherwise treat as string
-		// string val: Marshal never fails
-		json.Valid([]byte(val)) {
+		// --node in tree notation: auto-detect and convert to JSON.
+		if key == "node" && !json.Valid([]byte(val)) {
 			if raw, err := treeformat.Unmarshal([]byte(val)); err == nil {
 				m[key] = raw
 				continue
 			}
 		}
-		m[key] =
-
-			encodeValue(val)
+		// Otherwise treat as string.
+		m[key] = encodeValue(val)
 
 	}
 
