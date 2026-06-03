@@ -165,30 +165,75 @@ func ruleNilDereference(pkg *ssa.Package, absFile string) []Violation {
 	return violations
 }
 
-// findNilReturnFuncs returns the set of functions in pkg that provably return nil
-// on at least one path (for the first pointer/interface return value).
+// findNilReturnFuncs returns the set of functions in pkg that can return nil
+// on at least one path, computed to a fixed point so transitive callee chains
+// are covered.
+//
+// Round 0: seed with functions that directly return a nil constant.
+// Round N: add any function whose Return instruction returns a value that came
+//
+//	from calling a function already in the set.
+//
+// Iteration stops when no new functions are added (convergence).
 func findNilReturnFuncs(pkg *ssa.Package) map[*ssa.Function]bool {
 	result := make(map[*ssa.Function]bool)
+
+	// Collect all package functions once.
+	var fns []*ssa.Function
 	for _, mem := range pkg.Members {
-		fn, ok := mem.(*ssa.Function)
-		if !ok || fn.Blocks == nil {
-			continue
+		if fn, ok := mem.(*ssa.Function); ok && fn.Blocks != nil {
+			fns = append(fns, fn)
 		}
-		for _, b := range fn.Blocks {
-			for _, instr := range b.Instrs {
-				ret, ok := instr.(*ssa.Return)
-				if !ok {
+	}
+
+	// Fixed-point loop: keep expanding until stable.
+	for {
+		added := 0
+		for _, fn := range fns {
+			if result[fn] {
+				continue
+			}
+			if canReturnNil(fn, result) {
+				result[fn] = true
+				added++
+			}
+		}
+		if added == 0 {
+			break
+		}
+	}
+	return result
+}
+
+// canReturnNil reports whether fn has at least one Return instruction where a
+// pointer/interface result is either a nil constant or the result of calling a
+// function already known to return nil (nilSet).
+func canReturnNil(fn *ssa.Function, nilSet map[*ssa.Function]bool) bool {
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok {
+				continue
+			}
+			for _, res := range ret.Results {
+				if !isPointerOrInterface(res.Type()) {
 					continue
 				}
-				for _, res := range ret.Results {
-					if isNilSSAValue(res) && isPointerOrInterface(res.Type()) {
-						result[fn] = true
+				if isNilSSAValue(res) {
+					return true
+				}
+				// Transitive: result is a call to a nil-returning function.
+				if call, ok := res.(*ssa.Call); ok {
+					if callee, ok := call.Common().Value.(*ssa.Function); ok {
+						if nilSet[callee] {
+							return true
+						}
 					}
 				}
 			}
 		}
 	}
-	return result
+	return false
 }
 
 // checkFuncForNilDeref walks a single SSA function body looking for unguarded

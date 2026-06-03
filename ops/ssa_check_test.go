@@ -107,6 +107,24 @@ func f() int {
 	}
 }
 
+func TestNilDereference_TransitiveNilReturnFires(t *testing.T) {
+	// inner returns nil; wrapper returns inner's result; caller dereferences without check.
+	// Requires transitive fixed-point expansion of nilReturnFuncs.
+	v := runTypeRule(t, `package testpkg
+
+func inner() *string { return nil }
+func wrapper() *string { return inner() }
+
+func f() string {
+	p := wrapper()
+	return *p
+}
+`, "nil_dereference")
+	if len(v) == 0 {
+		t.Error("expected violation: transitive nil through call chain wrapper→inner→nil")
+	}
+}
+
 func TestNilDereference_AllRuleEnabledByAll(t *testing.T) {
 	ops.SetDefaultChecksConfig(hooks.ChecksConfig{Enforce: []string{"all"}})
 	t.Cleanup(func() { ops.SetDefaultChecksConfig(hooks.ChecksConfig{}) })
