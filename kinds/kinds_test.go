@@ -51,8 +51,8 @@ func roundTripJSON(t *testing.T, node kinds.Node, expectedKind string) {
 		t.Fatalf("unmarshal roundTripped: %v", err)
 	}
 
-	origJSON, _ := json.Marshal(origMap)
-	rtJSON, _ := json.Marshal(rtMap)
+	origJSON, _ := json.Marshal(origMap) // json.Marshal on map[string]interface{} never fails
+	rtJSON, _ := json.Marshal(rtMap)     // json.Marshal on map[string]interface{} never fails
 	if string(origJSON) != string(rtJSON) {
 		t.Errorf("round-trip mismatch:\n  orig: %s\n  rt:   %s", origJSON, rtJSON)
 	}
@@ -498,6 +498,37 @@ func TestRoundTrip_ValueSpec(t *testing.T) {
 		Type:      typ,
 		Values:    []json.RawMessage{val, val},
 	}, "ValueSpec")
+}
+
+func TestRoundTrip_ValueSpec_NoValues(t *testing.T) {
+	// var x int — type only, no initializer
+	typ := mustMarshal(&kinds.Ident{KindField: "Ident", Name: "int"})
+	node := &kinds.ValueSpec{
+		KindField: "ValueSpec",
+		Names:     []string{"x"},
+		Type:      typ,
+	}
+
+	// ToAST must not return an error
+	astNode, err := node.ToAST()
+	if err != nil {
+		t.Fatalf("ToAST: %v", err)
+	}
+
+	// MarshalNode round-trips back to JSON without error
+	out, err := kinds.MarshalNode(astNode)
+	if err != nil {
+		t.Fatalf("MarshalNode: %v", err)
+	}
+
+	// The JSON output must not contain a "values" key
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if _, exists := m["values"]; exists {
+		t.Errorf("expected no \"values\" key in output, got: %s", out)
+	}
 }
 
 func TestRoundTrip_TypeSpec(t *testing.T) {

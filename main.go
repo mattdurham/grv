@@ -177,7 +177,7 @@ func sendAndPrint(toolName string, argsJSON json.RawMessage) {
 			"result": nil,
 			"error":  err.Error(),
 		}
-		b, _ := json.Marshal(errResp)
+		b, _ := json.Marshal(errResp) // error response struct: Marshal never fails
 		fmt.Println(string(b))
 		os.Exit(1)
 	}
@@ -190,22 +190,29 @@ func parseToolFlags(args []string) json.RawMessage {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--") {
 			if _, exists := m["namespace"]; !exists {
-				b, _ := json.Marshal(arg)
+				b, _ := json.Marshal(arg) // string arg: Marshal never fails
 				m["namespace"] = b
 			}
 			continue
 		}
 		key := strings.TrimPrefix(arg, "--")
+		var val string
+		var hasEmbeddedVal bool
+		if k, v, ok := strings.Cut(key, "="); ok {
+			key, val, hasEmbeddedVal = k, v, true
+		}
 		key = strings.ReplaceAll(key, "-", "_")
 
-		// Check if there's a value
-		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+		if hasEmbeddedVal {
+			// --key=value form: val already set, fall through to marshal below
+		} else if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
 			// Boolean flag
 			m[key] = json.RawMessage("true")
 			continue
+		} else {
+			i++
+			val = args[i]
 		}
-		i++
-		val := args[i]
 
 		// Check if val is raw JSON (object or array)
 		if len(val) > 0 && (val[0] == '{' || val[0] == '[') {
@@ -216,11 +223,11 @@ func parseToolFlags(args []string) json.RawMessage {
 			}
 		}
 		// Otherwise treat as string
-		b, _ := json.Marshal(val)
+		b, _ := json.Marshal(val) // string val: Marshal never fails
 		m[key] = b
 	}
 
-	result, _ := json.Marshal(m)
+	result, _ := json.Marshal(m) // map of RawMessage: Marshal never fails
 	return result
 }
 

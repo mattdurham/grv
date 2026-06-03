@@ -86,3 +86,34 @@ func TestParseToolFlags_Empty(t *testing.T) {
 		t.Errorf("expected empty map, got %v", m)
 	}
 }
+
+func TestParseToolFlags_EmbeddedEquals(t *testing.T) {
+	tests := []struct {
+		args    []string
+		key     string
+		wantVal string
+	}{
+		{[]string{"--dry-run=somevalue"}, "dry_run", "somevalue"},
+		{[]string{"--flag="}, "flag", ""},
+	}
+	for _, tc := range tests {
+		result := parseToolFlags(tc.args)
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(result, &m); err != nil {
+			t.Fatalf("args %v: unmarshal: %v", tc.args, err)
+		}
+		raw, ok := m[tc.key]
+		if !ok {
+			t.Errorf("args %v: key %q missing from result %s", tc.args, tc.key, result)
+			continue
+		}
+		var got string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Errorf("args %v: unmarshal value: %v", tc.args, err)
+			continue
+		}
+		if got != tc.wantVal {
+			t.Errorf("args %v: key %q = %q, want %q", tc.args, tc.key, got, tc.wantVal)
+		}
+	}
+}
