@@ -129,10 +129,12 @@ type ruleFunc func(fset *token.FileSet, src []byte, f *ast.File, absFile string)
 
 // builtinRules is the registry of all built-in rules by name.
 var builtinRules = map[string]ruleFunc{
-	"error_handled":             ruleErrorHandled,
+	"error_handled":              ruleErrorHandled,
 	"type_assertion_not_checked": ruleTypeAssertionNotChecked,
-	"mutex_not_embedded":        ruleMutexNotEmbedded,
+	"mutex_not_embedded":         ruleMutexNotEmbedded,
 	"channel_size_not_one_or_zero": ruleChannelSizeNotOneOrZero,
+	"map_without_size_hint":      ruleMapWithoutSizeHint,
+	"slice_without_capacity":     ruleSliceWithoutCapacity,
 }
 
 // resolveRules expands the enforce list into concrete ruleFuncs.
@@ -398,6 +400,100 @@ func ruleChannelSizeNotOneOrZero(fset *token.FileSet, _ []byte, f *ast.File, abs
 			Line:    line,
 			Rule:    "channel_size_not_one_or_zero",
 			Message: fmt.Sprintf("channel buffer size %d is greater than 1 — prefer 0 (unbuffered) or 1; larger buffers often hide synchronisation bugs", v),
+		})
+		return true
+	})
+	return violations
+}
+
+// ruleMapWithoutSizeHint flags make(map[K]V) calls with no size argument.
+//
+// Providing a capacity hint lets the runtime pre-allocate buckets and avoids
+// repeated rehashing as the map grows. Use 0 when the final size is unknown —
+// that is semantically equivalent to no hint but makes the intent explicit.
+//
+// Passes:
+//
+//	make(map[K]V, 0)   // unknown size, explicit acknowledgement
+//	make(map[K]V, 100) // known capacity
+//
+// Fails:
+//
+//	make(map[K]V) // no hint at all
+func ruleMapWithoutSizeHint(fset *token.FileSet, _ []byte, f *ast.File, absFile string) []Violation {
+	var violations []Violation
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fun, ok := call.Fun.(*ast.Ident)
+		if !ok || fun.Name != "make" {
+			return true
+		}
+		if len(call.Args) < 1 {
+			return true
+		}
+		if _, isMap := call.Args[0].(*ast.MapType); !isMap {
+			return true
+		}
+		// Flag only when no size argument is provided at all.
+		if len(call.Args) >= 2 {
+			return true
+		}
+		violations = append(violations, Violation{
+			File:    absFile,
+			Line:    fset.Position(call.Pos()).Line,
+			Rule:    "map_without_size_hint",
+			Message: "make(map[...]) has no size hint — add a capacity estimate, or use 0 if the final size is unknown",
+		})
+		return true
+	})
+	return violations
+}
+
+// ruleSliceWithoutCapacity flags make([]T, n) calls with no capacity argument.
+//
+// Specifying a capacity avoids repeated allocations as the slice grows via append.
+// Use 0 as the capacity when the final size is unknown — that is explicit and
+// avoids the ambiguity of omitting the argument entirely.
+//
+// Passes:
+//
+//	make([]T, 0, 0)   // unknown capacity, explicit acknowledgement
+//	make([]T, 0, 100) // known capacity
+//	var s []T         // preferred for nil/zero-length slices
+//
+// Fails:
+//
+//	make([]T, 0) // length provided but no capacity hint
+//	make([]T, n) // length provided but no capacity hint
+func ruleSliceWithoutCapacity(fset *token.FileSet, _ []byte, f *ast.File, absFile string) []Violation {
+	var violations []Violation
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fun, ok := call.Fun.(*ast.Ident)
+		if !ok || fun.Name != "make" {
+			return true
+		}
+		if len(call.Args) < 1 {
+			return true
+		}
+		if _, isSlice := call.Args[0].(*ast.ArrayType); !isSlice {
+			return true
+		}
+		// Flag only when exactly one extra argument (length) but no capacity.
+		if len(call.Args) != 2 {
+			return true
+		}
+		violations = append(violations, Violation{
+			File:    absFile,
+			Line:    fset.Position(call.Pos()).Line,
+			Rule:    "slice_without_capacity",
+			Message: "make([]T, n) has no capacity argument — add a capacity estimate, or use 0 if unknown; use var s []T instead for zero-length nil slices",
 		})
 		return true
 	})

@@ -21,6 +21,36 @@ func writeTemp(t *testing.T, content string) string {
 	return path
 }
 
+func runRule(t *testing.T, src, rule string) []ops.Violation {
+	t.Helper()
+	path := writeTemp(t, src)
+	ops.SetDefaultChecksConfig(hooks.ChecksConfig{Enforce: []string{rule}})
+	t.Cleanup(func() { ops.SetDefaultChecksConfig(hooks.ChecksConfig{}) })
+	raw, err := ops.HandleASTCheck(ops.ASTCheckArgs{File: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v []ops.Violation
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func assertFires(t *testing.T, src, rule string) {
+	t.Helper()
+	if v := runRule(t, src, rule); len(v) == 0 {
+		t.Errorf("expected at least 1 violation for rule %q, got 0", rule)
+	}
+}
+
+func assertPasses(t *testing.T, src, rule string) {
+	t.Helper()
+	if v := runRule(t, src, rule); len(v) != 0 {
+		t.Errorf("expected 0 violations for rule %q, got %d: %+v", rule, len(v), v)
+	}
+}
+
 func TestASTCheck_ErrorHandled_Fires(t *testing.T) {
 	path := writeTemp(t, `package x
 
@@ -320,4 +350,81 @@ func f() {
 	_ = s
 }
 `, "channel_size_not_one_or_zero")
+}
+
+// ---- map_without_size_hint ----
+
+func TestMapWithoutSizeHint_Fires(t *testing.T) {
+	assertFires(t, `package x
+func f() {
+	m := make(map[string]int)
+	_ = m
+}
+`, "map_without_size_hint")
+}
+
+func TestMapWithoutSizeHint_PassesExplicitZero(t *testing.T) {
+	assertPasses(t, `package x
+func f() {
+	m := make(map[string]int, 0) // unknown size
+	_ = m
+}
+`, "map_without_size_hint")
+}
+
+func TestMapWithoutSizeHint_PassesNonZeroHint(t *testing.T) {
+	assertPasses(t, `package x
+func f() {
+	m := make(map[string]int, 100)
+	_ = m
+}
+`, "map_without_size_hint")
+}
+
+// ---- slice_without_capacity ----
+
+func TestSliceWithoutCapacity_Fires(t *testing.T) {
+	assertFires(t, `package x
+func f() {
+	s := make([]int, 0)
+	_ = s
+}
+`, "slice_without_capacity")
+}
+
+func TestSliceWithoutCapacity_FiresNonZeroLength(t *testing.T) {
+	assertFires(t, `package x
+func f() {
+	s := make([]int, 10)
+	_ = s
+}
+`, "slice_without_capacity")
+}
+
+func TestSliceWithoutCapacity_PassesExplicitZeroCap(t *testing.T) {
+	assertPasses(t, `package x
+func f() {
+	s := make([]int, 0, 0) // unknown capacity
+	_ = s
+}
+`, "slice_without_capacity")
+}
+
+func TestSliceWithoutCapacity_PassesNonZeroCap(t *testing.T) {
+	assertPasses(t, `package x
+func f() {
+	s := make([]int, 0, 100)
+	_ = s
+}
+`, "slice_without_capacity")
+}
+
+func TestSliceWithoutCapacity_PassesVarDecl(t *testing.T) {
+	// var s []int is the preferred form and must never fire
+	assertPasses(t, `package x
+func f() {
+	var s []int
+	_ = s
+}
+`, "slice_without_capacity")
 }
