@@ -10,6 +10,7 @@ import (
 
 	"github.com/mattdurham/grv/cmd"
 	"github.com/mattdurham/grv/daemon"
+	"github.com/mattdurham/grv/treeformat"
 )
 
 func main() {
@@ -151,8 +152,8 @@ func runJSONMode() {
 	if err := json.Unmarshal(data, &req); err != nil {
 		log.Fatalf("parse request: %v", err)
 	}
+	sendAndPrint(req.Tool, req.Args, "json")
 
-	sendAndPrint(req.Tool, req.Args)
 }
 
 func runToolMode(args []string) {
@@ -160,33 +161,40 @@ func runToolMode(args []string) {
 		printUsage()
 		os.Exit(1)
 	}
+	format, args := extractFormat(args)
 	toolName := args[0]
 	argsJSON := parseToolFlags(args[1:])
-	sendAndPrint(toolName, argsJSON)
-}
+	sendAndPrint(toolName, argsJSON, format)
 
-func sendAndPrint(toolName string, argsJSON json.RawMessage) {
+}
+func sendAndPrint(toolName string, argsJSON json.RawMessage, format string) {
 	dir := getCWD()
 	if err := cmd.StartDaemon(dir); err != nil {
 		log.Fatalf("start daemon: %v", err)
 	}
-
 	grvDir, err := cmd.GRVDir()
 	if err != nil {
 		log.Fatalf("grv dir: %v", err)
 	}
 	sockPath := cmd.SockPath(grvDir)
-
 	result, err := cmd.SendRequest(sockPath, toolName, argsJSON)
 	if err != nil {
-		errResp := map[string]interface{}{
-			"result": nil,
-			"error":  err.Error(),
-		}
-		b, _ := json.Marshal(errResp) // error response struct: Marshal never fails
+		errResp := map[string]interface {
+		}{"result": nil, "error": err.Error()}
+		b, _ := json.Marshal(errResp)
 		fmt.Println(string(b))
 		os.Exit(1)
 	}
+	if format == "tree" && isASTTool(toolName) {
+		if out, err := treeformat.Marshal(
+
+			// error response struct: Marshal never fails
+			result); err == nil {
+			fmt.Println(string(out))
+			return
+		}
+	}
+
 	fmt.Println(string(result))
 }
 
@@ -228,12 +236,53 @@ func parseToolFlags(args []string) json.RawMessage {
 				continue
 			}
 		}
+		if key == "node" && !
+
 		// Otherwise treat as string
-		b, _ := json.Marshal(val) // string val: Marshal never fails
-		m[key] = b
+		// string val: Marshal never fails
+		json.Valid([]byte(val)) {
+			if raw, err := treeformat.Unmarshal([]byte(val)); err == nil {
+				m[key] = raw
+				continue
+			}
+		}
+		m[key] =
+
+			encodeValue(val)
+
 	}
 
 	result, _ := json.Marshal(m) // map of RawMessage: Marshal never fails
 	return result
 }
+func extractFormat(args []string) (string, []string) {
+	format := "tree"
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--format=") {
+			format = strings.TrimPrefix(arg, "--format=")
+			continue
+		}
+		if arg == "--format" && i+1 < len(args) {
+			i++
+			format = args[i]
+			continue
+		}
+		out = append(out, arg)
+	}
+	return format, out
+}
+func encodeValue(val string) json.RawMessage {
+	b, _ := json.Marshal(val)
+	return b
+}
 
+func isASTTool(name string) bool {
+	switch name {
+	case "ast_query", "ast_list", "ast_query_many", "ast_meta", "ast_directory", "ast_find", "ast_find_symbols", "ast_node_at", "ast_check", "ast_find_refs", "ast_find_def", "ast_find_impls", "ast_list_imports", "gomod_read", "ast_insert", "ast_replace", "ast_insert_many", "ast_replace_many", "ast_delete", "ast_delete_many", "ast_patch", "ast_rename":
+		return true
+	default:
+		return false
+	}
+}

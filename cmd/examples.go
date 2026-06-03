@@ -72,7 +72,7 @@ var exampleRegistry = map[string][]ExampleInfo{
 		},
 		{
 			Desc:    "Insert a statement at the top of a function body",
-			Command: `grv ast_insert --file ops/checks.go --path '[{"kind":"FuncDecl","name":"runChecks"},{"kind":"BlockStmt"}]' --index 0 --node '{"kind":"ExprStmt","x":{"kind":"CallExpr","fun":{"kind":"SelectorExpr","x":{"kind":"Ident","name":"fmt"},"sel":"Println"},"args":[{"kind":"BasicLit","kind_":"STRING","value":"\"debug\""}]}}' --dry_run true`,
+			Command: `grv ast_insert --file ops/checks.go --path '[{"kind":"FuncDecl","name":"runChecks"},{"kind":"BlockStmt"}]' --index 0 --node '{"kind":"ExprStmt","x":{"kind":"CallExpr","fun":{"kind":"SelectorExpr","x":{"kind":"Ident","name":"fmt"},"sel":"Println"},"args":[{"kind":"BasicLit","tok":"STRING","value":"\"debug\""}]}}' --dry_run true`,
 		},
 	},
 	"ast_insert_many": {
@@ -84,13 +84,27 @@ var exampleRegistry = map[string][]ExampleInfo{
 	"ast_replace": {
 		{
 			Desc:    "Replace a function body (dry run first)",
-			Command: `grv ast_replace --file ops/checks.go --path '[{"kind":"FuncDecl","name":"knownRuleNames"}]' --node '{"kind":"FuncDecl","name":"knownRuleNames","body":{"kind":"BlockStmt","list":[{"kind":"ReturnStmt","results":[{"kind":"BasicLit","kind_":"STRING","value":"\"error_handled\""}]}]}}' --dry_run true`,
+			Command: `grv ast_replace --file ops/checks.go --path '[{"kind":"FuncDecl","name":"knownRuleNames"}]' --node '{"kind":"FuncDecl","name":"knownRuleNames","body":{"kind":"BlockStmt","list":[{"kind":"ReturnStmt","results":[{"kind":"BasicLit","tok":"STRING","value":"\"error_handled\""}]}]}}' --dry_run true`,
 		},
 	},
 	"ast_replace_many": {
 		{
 			Desc:    "Rename two identifiers in one atomic write",
 			Command: `grv ast_replace_many --file ops/checks.go --ops '[{"path":[{"kind":"FuncDecl","name":"ruleErrorHandled"},{"kind":"Ident","name":"ruleErrorHandled"}],"node":{"kind":"Ident","name":"ruleErrorDiscarded"}},{"path":[{"kind":"FuncDecl","name":"ruleErrorDiscarded"}],"node":{"kind":"FuncDecl","name":"ruleErrorDiscarded"}}]' --dry_run true`,
+		},
+	},
+	"ast_patch": {
+		{
+			Desc:    "Rename a function by patching only its name field (dry run first)",
+			Command: `grv ast_patch --file ops/checks.go --path '[{"kind":"FuncDecl","name":"ruleErrorHandled"}]' --ops '[{"op":"set","field":"name","value":"\"ruleErrorDiscarded\""}]' --dry_run true`,
+		},
+		{
+			Desc:    "Append a return value to a ReturnStmt",
+			Command: `grv ast_patch --file ops/checks.go --path '[{"kind":"FuncDecl","name":"knownRuleNames"},{"kind":"BlockStmt"},{"kind":"ReturnStmt"}]' --ops '[{"op":"append","field":"results","value":{"kind":"BasicLit","tok":"STRING","value":"\"new_rule\""}}]' --dry_run true`,
+		},
+		{
+			Desc:    "Remove a field from a node (e.g. clear a function receiver)",
+			Command: `grv ast_patch --file ops/checks.go --path '[{"kind":"FuncDecl","name":"runChecks"}]' --ops '[{"op":"delete","field":"recv"}]' --dry_run true`,
 		},
 	},
 	"ast_delete": {

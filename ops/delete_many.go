@@ -35,6 +35,9 @@ func HandleASTDeleteMany(args ASTDeleteManyArgs) (json.RawMessage, error) {
 	if isReadonly(args.File) {
 		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
+	if len(args.Ops) == 0 {
+		return okResult(map[string]interface{}{"changed": false, "diff": ""})
+	}
 
 	type parsedOp struct {
 		steps []selector.PathStep
@@ -62,7 +65,6 @@ func HandleASTDeleteMany(args ASTDeleteManyArgs) (json.RawMessage, error) {
 		}
 		return nil
 	})
-	// enforcePostWrite is intentional: batch deletes run checks; single-op delete.go can be aligned separately.
 	if err == nil && !args.DryRun && result.Changed {
 		if err2 := enforcePostWrite(args.File, original, DefaultChecksConfig.Enforce); err2 != nil {
 			err = err2

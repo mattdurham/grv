@@ -111,6 +111,7 @@ func (s *Server) buildDispatch() map[string]func(json.RawMessage) (json.RawMessa
 		"ast_find_refs":      makeHandler(ops.HandleASTFindRefs),
 		"ast_find_def":       makeHandler(ops.HandleASTFindDef),
 		"ast_find_impls":     makeHandler(ops.HandleASTFindImpls),
+		"ast_patch":          makeHandler(ops.HandleASTPatch),
 		"ast_place":          makeHandler(ops.HandleASTPlace),
 		"file_read":          makeHandler(ops.HandleFileRead),
 		"file_write":         makeHandler(ops.HandleFileWrite),
@@ -221,6 +222,7 @@ var writeTools = map[string]bool{
 	"ast_replace_many": true,
 	"ast_delete":       true,
 	"ast_delete_many":  true,
+	"ast_patch":        true,
 	"ast_rename":       true,
 	"file_write":       true,
 }
