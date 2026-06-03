@@ -1,33 +1,39 @@
 package hooks
 
 import (
-	"bufio"
-	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-// ChecksConfig holds rule enforcement settings loaded from grv.toml [checks].
+// ChecksConfig holds rule enforcement settings loaded from grv.yaml [checks].
 type ChecksConfig struct {
-	Enforce []string // rule names to enforce, or ["all"] for every built-in rule
+	Enforce []string `yaml:"enforce"` // rule names to enforce, or ["all"] for every built-in rule
 }
 
 // HookConfig describes a single configured hook.
 type HookConfig struct {
-	Name        string
-	Command     []string
-	Scope       string        // "file" | "all"
-	Cache       bool
-	Immutable   bool
-	Timeout     time.Duration // default 5s if zero after parsing
-	Kinds       []string      // optional kind filter
-	StripFields []string      // JSON keys to remove from each result object before storing
+	Name        string        `yaml:"name"`
+	Command     []string      `yaml:"command"`
+	Scope       string        `yaml:"scope"`        // "file" | "all"
+	Cache       bool          `yaml:"cache"`
+	Immutable   bool          `yaml:"immutable"`
+	TimeoutStr  string        `yaml:"timeout"`      // e.g. "10s" — parsed into Timeout
+	Timeout     time.Duration `yaml:"-"`
+	Kinds       []string      `yaml:"kinds"`        // optional kind filter
+	StripFields []string      `yaml:"strip_fields"` // JSON keys to remove from each result before storing
 }
 
-// LoadConfig searches for a grv.toml config file starting at dir, then walking
-// up to the go.mod root, then checking ~/.grv/config.toml.
+// configFile is the top-level structure of grv.yaml.
+type configFile struct {
+	Hooks  []HookConfig `yaml:"hooks"`
+	Checks ChecksConfig  `yaml:"checks"`
+}
+
+// LoadConfig searches for a grv.yaml config file starting at dir, then walking
+// up to the go.mod root, then checking ~/.grv/config.yaml.
 // Returns nil configs and zero ChecksConfig if no config file is found.
 func LoadConfig(dir string) ([]HookConfig, ChecksConfig, error) {
 	path := findConfigFile(dir)
@@ -38,209 +44,70 @@ func LoadConfig(dir string) ([]HookConfig, ChecksConfig, error) {
 	if err != nil {
 		return nil, ChecksConfig{}, err
 	}
-	return parseGRVTOML(data)
+	return parseConfig(data)
 }
 
-// findConfigFile returns the first grv.toml found: dir/grv.toml, then
-// walking up to the go.mod root, then ~/.grv/config.toml. Returns "" if not found.
+// findConfigFile returns the first config file found: grv.yaml in dir, then
+// walking up to the go.mod root, then ~/.grv/config.yaml. Returns "" if not found.
 func findConfigFile(dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		abs = dir
 	}
 
-	// Check dir for grv.toml or goast.toml (grv.toml takes precedence)
-	for _, name := range []string{"grv.toml", "goast.toml"} {
-		candidate := filepath.Join(abs, name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
+	// Check dir for grv.yaml
+	if _, err := os.Stat(filepath.Join(abs, "grv.yaml")); err == nil {
+		return filepath.Join(abs, "grv.yaml")
 	}
 
-	// Walk up looking for go.mod, then check grv.toml/goast.toml there
+	// Walk up looking for go.mod, then check there
 	for d := filepath.Dir(abs); d != filepath.Dir(d); d = filepath.Dir(d) {
 		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			for _, name := range []string{"grv.toml", "goast.toml"} {
-				candidate := filepath.Join(d, name)
-				if _, err := os.Stat(candidate); err == nil {
-					return candidate
-				}
+			if _, err := os.Stat(filepath.Join(d, "grv.yaml")); err == nil {
+				return filepath.Join(d, "grv.yaml")
 			}
 			break
 		}
 	}
 
-	// Check ~/.grv/config.toml
+	// Check ~/.grv/config.yaml
 	if home, err := os.UserHomeDir(); err == nil {
-		globalConfig := filepath.Join(home, ".grv", "config.toml")
-		if _, err := os.Stat(globalConfig); err == nil {
-			return globalConfig
+		if p := filepath.Join(home, ".grv", "config.yaml"); fileExists(p) {
+			return p
 		}
 	}
 
 	return ""
 }
 
-// parseGRVTOML parses a TOML file containing [[hooks]] array-of-tables and
-// an optional [checks] flat-table section.
-func parseGRVTOML(data []byte) ([]HookConfig, ChecksConfig, error) {
-	var configs []HookConfig
-	var current *HookConfig
-	var checks ChecksConfig
-	inChecksSection := false
-
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		if line == "[[hooks]]" {
-			if current != nil && current.Name != "" {
-				configs = append(configs, *current)
-			}
-			current = &HookConfig{}
-			inChecksSection = false
-			continue
-		}
-
-		if line == "[checks]" {
-			if current != nil && current.Name != "" {
-				configs = append(configs, *current)
-				current = nil
-			}
-			inChecksSection = true
-			continue
-		}
-
-		if inChecksSection {
-			key, value, ok := parseLine(line)
-			if !ok {
-				continue
-			}
-			if key == "enforce" {
-				checks.Enforce = parseInlineArray(value)
-			}
-			continue
-		}
-
-		if current == nil {
-			continue
-		}
-
-		key, value, ok := parseLine(line)
-		if !ok {
-			continue
-		}
-
-		switch key {
-		case "immutable":
-			current.Immutable = strings.TrimSpace(value) == "true"
-		case "name":
-			current.Name = unquote(value)
-		case "command":
-			current.Command = parseInlineArray(value)
-		case "scope":
-			current.Scope = unquote(value)
-		case "cache":
-			current.Cache = strings.TrimSpace(value) == "true"
-		case "timeout":
-			d, err := time.ParseDuration(unquote(value))
-			if err != nil {
-				d = 5 * time.Second
-			}
-			current.Timeout = d
-		case "kinds":
-			current.Kinds = parseInlineArray(value)
-		case "strip_fields":
-			current.StripFields = parseInlineArray(value)
-		}
-	}
-
-	if current != nil && current.Name != "" {
-		configs = append(configs, *current)
-	}
-
-	// Apply default timeout
-	for i := range configs {
-		if configs[i].Timeout == 0 {
-			configs[i].Timeout = 5 * time.Second
-		}
-	}
-
-	return configs, checks, scanner.Err()
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
-// parseLine splits "key = value" into (key, value, true). Returns (_, _, false) on failure.
-func parseLine(line string) (key, value string, ok bool) {
-	idx := strings.IndexByte(line, '=')
-	if idx < 0 {
-		return "", "", false
+// parseConfig unmarshals YAML config data.
+func parseConfig(data []byte) ([]HookConfig, ChecksConfig, error) {
+	var cfg configFile
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, ChecksConfig{}, err
 	}
-	return strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+1:]), true
-}
 
-// unquote strips leading/trailing double-quotes, whitespace, and unescapes \" → "
-func unquote(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		s = s[1 : len(s)-1]
-		s = strings.ReplaceAll(s, `\"`, `"`)
-		s = strings.ReplaceAll(s, `\\`, `\`)
+	// Parse timeout strings and apply defaults.
+	hooks := cfg.Hooks[:0:len(cfg.Hooks)]
+	for _, h := range cfg.Hooks {
+		if h.Name == "" {
+			continue
+		}
+		if h.TimeoutStr != "" {
+			if d, err := time.ParseDuration(h.TimeoutStr); err == nil {
+				h.Timeout = d
+			}
+		}
+		if h.Timeout == 0 {
+			h.Timeout = 5 * time.Second
+		}
+		hooks = append(hooks, h)
 	}
-	return s
-}
 
-// parseInlineArray parses a TOML inline array like ["a", "b c", "d"].
-// Handles quoted strings containing commas correctly.
-func parseInlineArray(s string) []string {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "[") || !strings.HasSuffix(s, "]") {
-		return nil
-	}
-	s = s[1 : len(s)-1] // strip [ ]
-	var result []string
-	for len(s) > 0 {
-		s = strings.TrimSpace(s)
-		if len(s) == 0 {
-			break
-		}
-		if s[0] == '"' {
-			// find matching closing quote, respecting \"
-			end := 1
-			for end < len(s) {
-				if s[end] == '\\' {
-					end += 2
-					continue
-				}
-				if s[end] == '"' {
-					break
-				}
-				end++
-			}
-			result = append(result, unquote(s[:end+1]))
-			s = strings.TrimSpace(s[end+1:])
-			if len(s) > 0 && s[0] == ',' {
-				s = s[1:]
-			}
-		} else {
-			// unquoted value — find next comma
-			idx := strings.IndexByte(s, ',')
-			if idx < 0 {
-				v := strings.TrimSpace(s)
-				if v != "" {
-					result = append(result, v)
-				}
-				break
-			}
-			v := strings.TrimSpace(s[:idx])
-			if v != "" {
-				result = append(result, v)
-			}
-			s = s[idx+1:]
-		}
-	}
-	return result
+	return hooks, cfg.Checks, nil
 }

@@ -7,26 +7,28 @@ import (
 	"time"
 )
 
-func TestLoadConfig_TwoHooks(t *testing.T) {
-	dir := t.TempDir()
-	toml := `
-[[hooks]]
-name    = "lth"
-command = ["~/bin/lth", "search", "{namespace}"]
-scope   = "file"
-cache   = true
-timeout = "5s"
-
-[[hooks]]
-name    = "echo"
-command = ["echo", "hi"]
-scope   = "file"
-cache   = false
-timeout = "2s"
-`
-	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
+func writeYAML(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestLoadConfig_TwoHooks(t *testing.T) {
+	dir := t.TempDir()
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - name: lth
+    command: ["~/bin/lth", "search", "{namespace}"]
+    scope: file
+    cache: true
+    timeout: "5s"
+  - name: echo
+    command: ["echo", "hi"]
+    scope: file
+    cache: false
+    timeout: "2s"
+`)
 
 	configs, _, err := LoadConfig(dir)
 	if err != nil {
@@ -81,9 +83,7 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 
 func TestLoadConfig_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", "")
 	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -95,15 +95,12 @@ func TestLoadConfig_EmptyFile(t *testing.T) {
 
 func TestLoadConfig_DefaultTimeout(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[[hooks]]
-name    = "noto"
-command = ["echo", "hi"]
-scope   = "file"
-`
-	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - name: noto
+    command: ["echo", "hi"]
+    scope: file
+`)
 	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -118,16 +115,13 @@ scope   = "file"
 
 func TestLoadConfig_KindsField(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[[hooks]]
-name    = "kindshook"
-command = ["echo", "hi"]
-scope   = "file"
-kinds   = ["FuncDecl", "TypeDecl"]
-`
-	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - name: kindshook
+    command: ["echo", "hi"]
+    scope: file
+    kinds: ["FuncDecl", "TypeDecl"]
+`)
 	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -149,10 +143,7 @@ func TestLoadConfig_WalkUp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n\ngo 1.21\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	toml := "[[hooks]]\nname = \"walkup\"\ncommand = [\"echo\", \"hi\"]\nscope = \"file\"\n"
-	if err := os.WriteFile(filepath.Join(root, "goast.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, root, "grv.yaml", "hooks:\n  - name: walkup\n    command: [\"echo\", \"hi\"]\n    scope: file\n")
 	configs, _, err := LoadConfig(sub)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -164,19 +155,14 @@ func TestLoadConfig_WalkUp(t *testing.T) {
 
 func TestLoadConfig_SkipsHookWithNoName(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[[hooks]]
-command = ["echo", "invalid"]
-scope   = "file"
-
-[[hooks]]
-name    = "valid"
-command = ["echo", "ok"]
-scope   = "file"
-`
-	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - command: ["echo", "invalid"]
+    scope: file
+  - name: valid
+    command: ["echo", "ok"]
+    scope: file
+`)
 	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -188,23 +174,19 @@ scope   = "file"
 		t.Errorf("expected 'valid', got %q", configs[0].Name)
 	}
 }
+
 func TestLoadConfig_ImmutableField(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[[hooks]]
-name      = "lth"
-command   = ["echo", "hi"]
-scope     = "file"
-immutable = true
-
-[[hooks]]
-name    = "echo"
-command = ["echo", "bye"]
-scope   = "file"
-`
-	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - name: lth
+    command: ["echo", "hi"]
+    scope: file
+    immutable: true
+  - name: echo
+    command: ["echo", "bye"]
+    scope: file
+`)
 	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
@@ -222,13 +204,10 @@ scope   = "file"
 
 func TestLoadConfig_ChecksEnforce(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[checks]
-enforce = ["error_handled"]
-`
-	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+checks:
+  enforce: ["error_handled"]
+`)
 	_, checks, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
@@ -240,13 +219,10 @@ enforce = ["error_handled"]
 
 func TestLoadConfig_ChecksEnforceAll(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[checks]
-enforce = ["all"]
-`
-	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+checks:
+  enforce: ["all"]
+`)
 	_, checks, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
@@ -258,18 +234,14 @@ enforce = ["all"]
 
 func TestLoadConfig_HooksAndChecks(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[[hooks]]
-name    = "lth"
-command = ["echo", "hi"]
-scope   = "file"
-
-[checks]
-enforce = ["error_handled"]
-`
-	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - name: lth
+    command: ["echo", "hi"]
+    scope: file
+checks:
+  enforce: ["error_handled"]
+`)
 	configs, checks, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
@@ -284,20 +256,17 @@ enforce = ["error_handled"]
 
 func TestLoadConfig_NoChecksSection(t *testing.T) {
 	dir := t.TempDir()
-	toml := `
-[[hooks]]
-name    = "lth"
-command = ["echo", "hi"]
-scope   = "file"
-`
-	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeYAML(t, dir, "grv.yaml", `
+hooks:
+  - name: lth
+    command: ["echo", "hi"]
+    scope: file
+`)
 	_, checks, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
 	if len(checks.Enforce) != 0 {
-		t.Errorf("expected empty Enforce when no [checks] section, got %v", checks.Enforce)
+		t.Errorf("expected empty Enforce when no checks section, got %v", checks.Enforce)
 	}
 }

@@ -1,0 +1,39 @@
+# grv.yaml — hook and check configuration for the grv project
+#
+# Namespace routing examples (requires running daemon):
+#   grv ast_list daemon              # list all decls in ./daemon/
+#   grv ast_list .                   # list all decls in the current package
+#   grv 'ast_list' 'daemon#Server'   # list decls in the file containing Server
+#   grv ast_directory hooks          # inventory ./hooks/ directory
+#   grv 'ast_query' 'daemon#Server' --path '[{"kind":"TypeSpec","name":"Server"}]'
+#
+# Note: use single quotes around arguments containing # to prevent shell comment interpretation.
+
+hooks:
+  - name: lth
+    command:
+      - "~/bin/lth"
+      - "--json"
+      - "search"
+      - "{namespace}"
+      - "--attr"
+      - "file={file}"
+      - "--attr"
+      - "project={project}"
+      - "--layers"
+      - "L3,L4"
+      - "--top"
+      - "5"
+      - "--brief"
+    scope: file
+    cache: true
+    # immutable means output is deterministic for a given git HEAD hash.
+    # The git-hash cache is used instead of the mtime cache.
+    immutable: true
+    timeout: "30s"
+
+checks:
+  # enforce: list of rule names to enforce, or ["all"] for every built-in rule.
+  # Default (empty list) means no rules enforced.
+  enforce:
+    - all
