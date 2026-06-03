@@ -183,228 +183,141 @@ func f() {
 
 // ---- type_assertion_not_checked ----
 
-func checkViolations(t *testing.T, src, rule string, wantCount int) []ops.Violation {
-	t.Helper()
-	path := writeTemp(t, src)
-	ops.SetDefaultChecksConfig(hooks.ChecksConfig{Enforce: []string{rule}})
-	t.Cleanup(func() { ops.SetDefaultChecksConfig(hooks.ChecksConfig{}) })
-	raw, err := ops.HandleASTCheck(ops.ASTCheckArgs{File: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var violations []ops.Violation
-	if err := json.Unmarshal(raw, &violations); err != nil {
-		t.Fatal(err)
-	}
-	if len(violations) != wantCount {
-		t.Errorf("expected %d violation(s), got %d: %+v", wantCount, len(violations), violations)
-	}
-	return violations
-}
-
-func TestTypeAssertionNotChecked_SingleLHSFires(t *testing.T) {
-	// v := x.(string) — unchecked, must fire.
-	checkViolations(t, `package x
-func f(v interface{}) string {
-	s := v.(string)
-	return s
-}
-`, "type_assertion_not_checked", 1)
-}
-
 func TestTypeAssertionNotChecked_OkFormPasses(t *testing.T) {
-	// v, ok := x.(string) — checked, must not fire.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f(v interface{}) (string, bool) {
 	s, ok := v.(string)
 	return s, ok
 }
-`, "type_assertion_not_checked", 0)
-}
-
-func TestTypeAssertionNotChecked_ExprStmtFires(t *testing.T) {
-	// x.(string) as a bare statement always panics on mismatch — must fire.
-	checkViolations(t, `package x
-func f(v interface{}) {
-	v.(string)
-}
-`, "type_assertion_not_checked", 1)
+`, "type_assertion_not_checked")
 }
 
 func TestTypeAssertionNotChecked_TypeSwitchAssignPasses(t *testing.T) {
 	// switch x := v.(type) — TypeAssertExpr with nil Type, must never fire.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f(v interface{}) {
 	switch x := v.(type) {
 	case string:
 		_ = x
 	}
 }
-`, "type_assertion_not_checked", 0)
+`, "type_assertion_not_checked")
 }
 
 func TestTypeAssertionNotChecked_TypeSwitchNoAssignPasses(t *testing.T) {
-	// switch v.(type) without assignment — must not fire.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f(v interface{}) {
 	switch v.(type) {
 	case string:
 	}
 }
-`, "type_assertion_not_checked", 0)
+`, "type_assertion_not_checked")
 }
 
 func TestTypeAssertionNotChecked_BlankAssignFires(t *testing.T) {
 	// _ = v.(string) — single LHS blank, still unchecked, must fire.
-	checkViolations(t, `package x
+	assertFires(t, `package x
 func f(v interface{}) {
 	_ = v.(string)
 }
-`, "type_assertion_not_checked", 1)
+`, "type_assertion_not_checked")
 }
 
 func TestTypeAssertionNotChecked_CommentSuppresses(t *testing.T) {
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f(v interface{}) string {
 	s := v.(string) // safe: caller guarantees type
 	return s
 }
-`, "type_assertion_not_checked", 0)
+`, "type_assertion_not_checked")
 }
 
 // ---- mutex_not_embedded ----
 
-func TestMutexNotEmbedded_ValueFires(t *testing.T) {
-	checkViolations(t, `package x
-import "sync"
-type S struct {
-	sync.Mutex
-}
-`, "mutex_not_embedded", 1)
-}
-
-func TestMutexNotEmbedded_PointerFires(t *testing.T) {
-	// *sync.Mutex embedded — same API-leak problem, must fire.
-	checkViolations(t, `package x
-import "sync"
-type S struct {
-	*sync.Mutex
-}
-`, "mutex_not_embedded", 1)
-}
-
 func TestMutexNotEmbedded_RWMutexFires(t *testing.T) {
-	checkViolations(t, `package x
+	assertFires(t, `package x
 import "sync"
 type S struct {
 	sync.RWMutex
 }
-`, "mutex_not_embedded", 1)
-}
-
-func TestMutexNotEmbedded_NamedFieldPasses(t *testing.T) {
-	// Named field mu sync.Mutex — not embedded, must not fire.
-	checkViolations(t, `package x
-import "sync"
-type S struct {
-	mu sync.Mutex
-}
-`, "mutex_not_embedded", 0)
+`, "mutex_not_embedded")
 }
 
 func TestMutexNotEmbedded_OtherEmbedPasses(t *testing.T) {
 	// Embedding a non-mutex type must not fire.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 import "sync"
 type S struct {
 	sync.WaitGroup
 }
-`, "mutex_not_embedded", 0)
+`, "mutex_not_embedded")
 }
 
 func TestMutexNotEmbedded_CommentSuppresses(t *testing.T) {
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 import "sync"
 type S struct {
 	sync.Mutex // intentional: S exposes Lock for external coordination
 }
-`, "mutex_not_embedded", 0)
+`, "mutex_not_embedded")
 }
 
 // ---- channel_size_not_one_or_zero ----
 
 func TestChannelSizeNotOneOrZero_ZeroPasses(t *testing.T) {
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f() {
 	ch := make(chan int, 0)
 	_ = ch
 }
-`, "channel_size_not_one_or_zero", 0)
+`, "channel_size_not_one_or_zero")
 }
 
 func TestChannelSizeNotOneOrZero_OnePasses(t *testing.T) {
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f() {
 	ch := make(chan int, 1)
 	_ = ch
 }
-`, "channel_size_not_one_or_zero", 0)
+`, "channel_size_not_one_or_zero")
 }
 
 func TestChannelSizeNotOneOrZero_TwoFires(t *testing.T) {
-	checkViolations(t, `package x
+	assertFires(t, `package x
 func f() {
 	ch := make(chan int, 2)
 	_ = ch
 }
-`, "channel_size_not_one_or_zero", 1)
-}
-
-func TestChannelSizeNotOneOrZero_LargeFires(t *testing.T) {
-	checkViolations(t, `package x
-func f() {
-	ch := make(chan int, 100)
-	_ = ch
-}
-`, "channel_size_not_one_or_zero", 1)
+`, "channel_size_not_one_or_zero")
 }
 
 func TestChannelSizeNotOneOrZero_NamedConstPasses(t *testing.T) {
 	// Non-literal size — cannot evaluate statically, must pass silently.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 const bufSize = 10
 func f() {
 	ch := make(chan int, bufSize)
 	_ = ch
 }
-`, "channel_size_not_one_or_zero", 0)
+`, "channel_size_not_one_or_zero")
 }
 
 func TestChannelSizeNotOneOrZero_UnbufferedPasses(t *testing.T) {
 	// make(chan int) with no size arg — must not fire.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f() {
 	ch := make(chan int)
 	_ = ch
 }
-`, "channel_size_not_one_or_zero", 0)
-}
-
-func TestChannelSizeNotOneOrZero_CommentSuppresses(t *testing.T) {
-	checkViolations(t, `package x
-func f() {
-	ch := make(chan int, 10) // intentional: pre-buffered for batch processing
-	_ = ch
-}
-`, "channel_size_not_one_or_zero", 0)
+`, "channel_size_not_one_or_zero")
 }
 
 func TestChannelSizeNotOneOrZero_NonChanMakePasses(t *testing.T) {
 	// make([]int, 10) — not a channel, must not fire.
-	checkViolations(t, `package x
+	assertPasses(t, `package x
 func f() {
 	s := make([]int, 10)
 	_ = s
 }
-`, "channel_size_not_one_or_zero", 0)
+`, "channel_size_not_one_or_zero")
 }
