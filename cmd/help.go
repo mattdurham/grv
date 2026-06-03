@@ -22,7 +22,7 @@ type ToolInfo struct {
 	Notes string
 }
 
-// ToolRegistry lists all 25 grv tools.
+// ToolRegistry lists all grv tools.
 var ToolRegistry = []ToolInfo{
 	{
 		Name: "ast_list",
@@ -58,7 +58,7 @@ var ToolRegistry = []ToolInfo{
 			{Name: "file", Type: "string", Required: false, Desc: "Path to Go source file"},
 			{Name: "dir", Type: "string", Required: false, Desc: "Directory to check all .go files"},
 		},
-		Notes: "Returns JSON array of {file,line,rule,message} violations. Rules are configured in grv.toml under [checks] enforce=[\"all\"] or enforce=[\"error_handled\"]. Default is no rules enforced. Enabled rules also run automatically on ast_insert and ast_replace, rejecting the write on any violation.",
+		Notes: "Returns JSON array of {file,line,rule,message} violations. Rules are configured in grv.toml under [checks] enforce=[\"all\"] or a subset. Available rules: error_handled, type_assertion_not_checked, mutex_not_embedded, channel_size_not_one_or_zero. Default is no rules enforced. Enabled rules also run automatically on ast_insert and ast_replace, rejecting the write on any violation.",
 	},
 	{
 		Name: "ast_meta",
@@ -82,6 +82,16 @@ var ToolRegistry = []ToolInfo{
 		},
 	},
 	{
+		Name: "ast_insert_many",
+		Desc: "Insert multiple AST nodes in a single atomic write",
+		Args: []ArgInfo{
+			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
+			{Name: "ops", Type: "[]op", Required: true, Desc: "List of {path, index, node} insert operations applied in order"},
+			{Name: "dry_run", Type: "bool", Required: false, Desc: "Return diff without writing"},
+		},
+		Notes: "All operations are applied to the same in-memory AST and written atomically. Later ops see the AST state produced by earlier ops.",
+	},
+	{
 		Name: "ast_replace",
 		Desc: "Replace an AST node at a selector path",
 		Args: []ArgInfo{
@@ -92,6 +102,16 @@ var ToolRegistry = []ToolInfo{
 		},
 	},
 	{
+		Name: "ast_replace_many",
+		Desc: "Replace multiple AST nodes in a single atomic write",
+		Args: []ArgInfo{
+			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
+			{Name: "ops", Type: "[]op", Required: true, Desc: "List of {path, node} replace operations applied in order"},
+			{Name: "dry_run", Type: "bool", Required: false, Desc: "Return diff without writing"},
+		},
+		Notes: "All operations are applied to the same in-memory AST and written atomically. Later ops see the AST state produced by earlier ops.",
+	},
+	{
 		Name: "ast_delete",
 		Desc: "Delete an AST node from a list container",
 		Args: []ArgInfo{
@@ -99,6 +119,16 @@ var ToolRegistry = []ToolInfo{
 			{Name: "path", Type: "[]step", Required: true, Desc: "Selector path to the node to delete"},
 			{Name: "dry_run", Type: "bool", Required: false, Desc: "Return diff without writing"},
 		},
+	},
+	{
+		Name: "ast_delete_many",
+		Desc: "Delete multiple AST nodes in a single atomic write",
+		Args: []ArgInfo{
+			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
+			{Name: "ops", Type: "[]op", Required: true, Desc: "List of {path} delete operations; ops on the same parent list must be ordered descending by index"},
+			{Name: "dry_run", Type: "bool", Required: false, Desc: "Return diff without writing"},
+		},
+		Notes: "Ops targeting the same parent list MUST be ordered by descending index (highest first). Each deletion shifts subsequent indices down by 1, so deleting a higher index first keeps lower indices valid. Ops on different parent lists may be in any order.",
 	},
 	{
 		Name: "ast_rename",

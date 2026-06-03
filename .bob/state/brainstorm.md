@@ -2292,3 +2292,506 @@ Key findings for the planner:
 7. stdin detection: `(stat.Mode() & os.ModeCharDevice) == 0` distinguishes pipe from terminal
 8. No new dependencies required — all needed packages are in stdlib
 
+
+---
+
+## 2026-06-03 00:00:00 - Task Received
+
+Batch write ops + 3 new ast_check rules for grv
+
+Feature 1 — Batch writes:
+- ast_insert_many: array of {path, index, node} applied in one editor.Edit call
+- ast_replace_many: array of {path, node} applied in one editor.Edit call
+- ast_delete_many: array of {path} applied in one editor.Edit call
+- All atomic: if any op fails, whole batch rejected, file untouched
+- enforcePostWrite runs once after all mutations
+- Wire into daemon dispatch + cmd/help.go
+
+Feature 2 — New rules in ops/checks.go builtinRules:
+- type_assertion_not_checked: single-value t := i.(T) can panic
+- mutex_not_embedded: sync.Mutex/RWMutex embedded (anonymous) in struct
+- channel_size_not_one_or_zero: make(chan T, N) where N>1 with no comment
+
+Starting brainstorm process...
+
+---
+
+## 2026-06-03 00:05:00 - Research Findings
+
+### editor.Edit Signature
+
+`editor.Edit(path string, dryRun bool, fn func(*ast.File, *token.FileSet) error) (Result, error)`
+
+- Parses file fresh on each call (invariant 3)
+- Calls `fn` with the parsed `*ast.File` and `*token.FileSet`
+- If `fn` returns error, the whole edit is aborted — file untouched (invariant 4)
+- On success: format with go/format, compute diff, write atomically via temp+rename
+- Returns `editor.Result{Diff string, Changed bool}`
+
+**Key insight for batch ops**: All mutations chain inside ONE `editor.Edit` callback. The callback
+receives the parsed AST once, then each op in the array navigates + mutates sequentially in the
+same `*ast.File`. One `editor.Edit` call = one parse + one format + one atomic write. This is
+the correct atomicity model — if mutation #3 of 5 fails, the error propagates out of the callback
+and the file is untouched.
+
+### Single-op Handler Pattern (from ops/insert.go)
+
+Structure of `HandleASTInsert`:
+1. Validate args (file or dir routing, readonly check)
+2. Parse path steps: `json.Unmarshal(args.Path, &steps)`
+3. Parse node: `kinds.UnmarshalNode(args.Node)` → kindNode
+4. `original, _ := os.ReadFile(args.File)` — saved for enforcePostWrite
+5. `result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, fset *token.FileSet) error {`
+   - `target, parentCtx, navErr := selector.Navigate(f, steps)`
+   - `newNode, toErr := kindNode.ToAST()`
+   - `insertIntoNode(target, newNode, index)` or fallback `insertIntoList(parentCtx, newNode, index)`
+   - `return nil`
+   `})`
+6. Post-write: if no error, not dryRun, changed: `enforcePostWrite(args.File, original, DefaultChecksConfig.Enforce)`
+7. Return `{"changed": result.Changed, "diff": result.Diff}` or error/navError
+
+**HandleASTReplace** follows same pattern — Navigate + `kindNode.ToAST()` + `replaceInParent(parentCtx, newNode)`.
+
+**HandleASTDelete** follows same pattern — Navigate + `deleteFromList(parentCtx)`.
+
+### Batch Op Design
+
+For `ast_insert_many` the args type needs to be:
+```go
+type InsertOp struct {
+    Path  json.RawMessage `json:"path"`
+    Index int             `json:"index"`
+    Node  json.RawMessage `json:"node"`
+}
+
+type ASTInsertManyArgs struct {
+    File   string      `json:"file"`
+    Ops    []InsertOp  `json:"ops"`
+    DryRun bool        `json:"dry_run"`
+}
+```
+
+For `ast_replace_many`:
+```go
+type ReplaceOp struct {
+    Path json.RawMessage `json:"path"`
+    Node json.RawMessage `json:"node"`
+}
+
+type ASTReplaceManyArgs struct {
+    File   string      `json:"file"`
+    Ops    []ReplaceOp `json:"ops"`
+    DryRun bool        `json:"dry_run"`
+}
+```
+
+For `ast_delete_many`:
+```go
+type DeleteOp struct {
+    Path json.RawMessage `json:"path"`
+}
+
+type ASTDeleteManyArgs struct {
+    File   string      `json:"file"`
+    Ops    []DeleteOp  `json:"ops"`
+    DryRun bool        `json:"dry_run"`
+}
+```
+
+All three *_many handlers follow:
+1. Validate file + readonly
+2. Pre-parse all ops (decode paths + nodes) BEFORE calling editor.Edit — fail fast on bad JSON
+3. `original, _ := os.ReadFile(args.File)`
+4. `result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, fset *token.FileSet) error {`
+   - For each op in args.Ops: navigate + mutate, return error on first failure
+   `})`
+5. enforcePostWrite once after Edit
+6. Return `{"changed": result.Changed, "diff": result.Diff}`
+
+### Path Ordering: Same Path, Multiple Ops
+
+If two replace ops target the same path: the AST node pointer is mutated in place. The first
+op replaces it; the second op navigates to the same location (already modified by the first op).
+Since navigation re-traverses the live AST on each call, the second Navigate call finds whatever
+node is at that path now. Last write wins — this is deterministic and correct.
+
+For delete_many with two ops targeting overlapping paths: the first delete removes the node
+from a list. The second Navigate for the same path will fail (node no longer exists at that
+index). This surfaces as a NavigateError, which aborts the whole batch. This is the correct
+behavior — the caller should not send conflicting deletes.
+
+### enforcePostWrite: Once Per Batch
+
+`enforcePostWrite(file string, original []byte, enforce []string)` runs ONCE after `editor.Edit`
+returns. It re-parses the written file and runs checks. This is identical to the single-op
+pattern — the batch is treated as one write event.
+
+### ruleFunc Signature
+
+```go
+type ruleFunc func(fset *token.FileSet, src []byte, f *ast.File, absFile string) []Violation
+```
+
+`builtinRules` is `map[string]ruleFunc` at `ops/checks.go:130`. Currently has one entry:
+`"error_handled": ruleErrorHandled`. New rules add entries to this map.
+
+### ruleErrorHandled Pattern (from ops/checks.go)
+
+The existing rule uses `ast.Inspect` to walk the file. Pattern:
+1. Build a set of comment lines: `map[int]bool` from `f.Comments`
+2. `ast.Inspect(f, func(n ast.Node) bool { ... })` — returns violations
+3. For each matching node: check comment line lookup, append `Violation{File, Line, Rule, Message}`
+
+The three new rules follow the same pattern.
+
+### Daemon Dispatch (daemon/daemon.go)
+
+`buildDispatch()` returns `map[string]func(json.RawMessage) (json.RawMessage, error)`.
+Each entry is `makeHandler(ops.HandleXxx)`. The `writeTools` var at line 214 is a set of
+tool names that get mutex-serialized.
+
+New tools need: entries in `buildDispatch()` return map and entries in `writeTools` map
+(since *_many are write tools).
+
+### cmd/help.go ToolRegistry
+
+`ToolRegistry` is a `[]ToolInfo` at line 26. Each entry has Name, Desc, Args `[]ArgInfo`, Notes.
+New batch tools need entries here with appropriate arg docs.
+
+### Spec-Driven Modules in Scope
+
+Searched ops/*.go for NOTE invariants: none found (grep returned no output).
+No SPECS.md, NOTES.md, TESTS.md, BENCHMARKS.md found in ops/.
+The CLAUDE.md at repo root has 5 invariants — all relevant:
+1. No raw source text in responses — batch ops return {changed, diff} same as single ops
+2. AST node tree is sole bidirectional rep — batch args use json.RawMessage for path and node
+3. Every write tool parses fresh — editor.Edit does this; batch wraps in one Edit call
+4. All writes atomic — one editor.Edit = one atomic write; batch enforces this naturally
+5. Readonly detection at ops layer — already done in single ops; batch adds isReadonly check
+
+---
+
+## 2026-06-03 00:20:00 - Approaches Considered
+
+### Batch Ops
+
+#### Approach 1: New files ops/insert_many.go, ops/replace_many.go, ops/delete_many.go
+
+Three new files, one handler each. Args types defined in each file. Pre-parse all ops, then
+single editor.Edit with a loop inside the callback.
+
+**Pros:**
+- Clean separation, each file ~60-80 lines
+- Easy to find: naming mirrors insert.go, replace.go, delete.go
+- Test file follows same pattern (ops_test.go already has TestHandleASTInsert etc.)
+
+**Cons:**
+- Three files for three closely related features
+
+**Fits existing patterns:** Yes — each op has its own file currently.
+
+#### Approach 2: Extend existing files (add Many handlers to insert.go etc.)
+
+Add `HandleASTInsertMany` to ops/insert.go alongside `HandleASTInsert`.
+
+**Pros:**
+- Fewer files
+- Args types naturally co-located with single-op args types
+
+**Cons:**
+- insert.go already has 6+ functions (HandleASTInsert, insertIntoNode, insertIntoList, insertAtStmt, insertAtField, insertAtDecl, insertAtExpr)
+- Adding Many handler makes the file longer without clear grouping
+- SingleOp and ManyOp callers are different; mixing in one file may confuse
+
+**Fits existing patterns:** Partially — existing files are already per-op.
+
+#### Approach 3: Single ops/batch.go for all three many-ops
+
+One file with all three handlers + their args types.
+
+**Pros:**
+- All batch ops in one place
+- Shared pre-parsing logic could be factored if needed
+
+**Cons:**
+- Breaks the one-op-per-file pattern
+- Harder to find: someone looking for ast_insert_many would check insert.go first
+
+**Recommendation: Approach 1** — new files per op, matching the existing naming convention.
+
+---
+
+### New Check Rules
+
+#### Approach A: Add rules as new functions in ops/checks.go
+
+Add three new `ruleXxx` functions in `ops/checks.go` and register them in `builtinRules`.
+
+**Pros:**
+- All rules in one file — easy to compare and audit
+- `builtinRules` map is in the same file (single edit point)
+- Consistent with existing `ruleErrorHandled`
+
+**Cons:**
+- `checks.go` grows longer (~60-80 lines per rule → +180-240 lines)
+
+**Fits existing patterns:** Yes — existing rule is in checks.go.
+
+#### Approach B: New file ops/checks_rules.go
+
+Move all rule functions (including ruleErrorHandled) to ops/checks_rules.go, keep dispatch in checks.go.
+
+**Pros:**
+- checks.go stays focused on dispatch/infrastructure
+- Rules are grouped in their own file
+
+**Cons:**
+- Moving ruleErrorHandled is an unnecessary refactor in this PR
+- Splits builtinRules registry from rule functions
+
+#### Approach C: Separate file per rule (ops/rule_type_assertion.go etc.)
+
+**Pros:**
+- Maximum granularity
+
+**Cons:**
+- Overkill for short functions (~40-50 lines each)
+- Too many files
+
+**Recommendation: Approach A** — add to checks.go, same as existing rule. builtinRules registry and rule functions stay co-located.
+
+---
+
+### Rule Implementation Details
+
+#### type_assertion_not_checked
+
+AST node to detect: `*ast.AssignStmt` where:
+- `len(assign.Lhs) == 1` (single LHS)
+- `len(assign.Rhs) == 1`
+- `assign.Rhs[0]` is `*ast.TypeAssertExpr`
+
+This is the single-value form `t := i.(T)`. The two-value form `t, ok := i.(T)` has
+`len(assign.Lhs) == 2` and is safe.
+
+Also detect `*ast.ValueSpec` (var declarations): `var t T = i.(T)` — less common.
+And bare `*ast.ExprStmt` where the expression is a type assert — extremely rare, but
+`_ = i.(T)` is an AssignStmt with 1 LHS being `_`.
+
+**Edge cases:**
+- `switch x := i.(type)` is a `*ast.TypeSwitchStmt`, NOT an AssignStmt — must not flag this
+- `i.(T)` used as a function arg `f(i.(T))` is an ExprStmt containing a CallExpr — the type
+  assert is inside a CallExpr arg, not a direct assignment. Should we flag this? No — the
+  panic would crash the whole call, so it's visible. Focus on assignment form only.
+- Return statement `return i.(T)` — the panic is clear from context. Focus on assignment form.
+
+**Comment suppression**: Same as error_handled — if there's a comment on the same line, suppress.
+
+**Detection via ast.Inspect:**
+```
+AssignStmt with len(Lhs)==1, len(Rhs)==1, Rhs[0] is TypeAssertExpr, TypeAssertExpr.Type != nil
+(TypeAssertExpr.Type == nil is the type-switch form x.(type) — BUT this can't appear in assign)
+```
+Note: `x.(type)` only appears in `TypeSwitchStmt.Assign`. In an `AssignStmt`, `Rhs[0]` being a
+`TypeAssertExpr` with `Type == nil` cannot be valid Go — the parser would reject it. So no need
+to check `Type != nil`.
+
+**Violation message**: `"type assertion not checked — use t, ok := i.(T) to avoid panic"`
+
+#### mutex_not_embedded
+
+AST node to detect: `*ast.StructType` where any `*ast.Field` has:
+- `len(field.Names) == 0` (anonymous/embedded field)
+- `field.Type` is `*ast.SelectorExpr` where `sel` is `"Mutex"` or `"RWMutex"` AND `x` is `"sync"`
+- OR `field.Type` is `*ast.StarExpr` wrapping the above (embedded pointer: `*sync.Mutex`)
+
+Walk via `ast.Inspect`. When visiting a `*ast.StructType`, check its `Fields.List`.
+
+**Edge case:** The rule should flag anonymous embedded `sync.Mutex`, not a named field:
+- `mu sync.Mutex` — NOT flagged (named field, intentional use)
+- `sync.Mutex` — flagged (embedded)
+- `*sync.Mutex` — flagged (embedded pointer)
+
+The check is `len(field.Names) == 0` for the embedded form.
+
+**Why flag this?** Copying a struct with embedded mutex copies the mutex too, which is almost
+always a bug. The `go vet` `copylocks` check also catches this, but not everyone runs vet.
+
+**Violation message**: `"sync.Mutex/RWMutex embedded in struct — embedding a mutex allows accidental copies; use a named field instead"`
+
+**Line**: Report the line of the struct field (the embedded mutex line), not the struct declaration line.
+
+#### channel_size_not_one_or_zero
+
+AST node to detect: `*ast.CallExpr` where:
+- `Fun` is `*ast.Ident` with `Name == "make"` (builtin)
+- `Args` has 2 or 3 elements
+- `Args[0]` is a `*ast.ChanType` (indicates `make(chan T, N)`)
+- `Args[1]` is a `*ast.BasicLit` with `Tok == token.INT`
+- The integer value is > 1
+
+**Edge cases:**
+- `make(chan T)` — no size arg, channel size 0 (unbuffered). Not flagged.
+- `make(chan T, 0)` — explicitly 0. Not flagged.
+- `make(chan T, 1)` — size 1 is the "signal channel" pattern. Not flagged.
+- `make(chan T, 2)` — size 2+ without comment. FLAGGED.
+- `make(chan T, bufferSize)` — size is a variable/constant, not a literal. NOT flagged (can't statically evaluate, and comment suppression applies).
+- `make(chan T, 1024)` — flagged if no comment on same line.
+
+**Why not flag 1?** Size-1 channels are a valid idiom (single-slot buffer to avoid deadlock in
+simple producer-consumer). Size > 1 usually indicates a specific capacity choice that warrants
+documentation.
+
+**Comment suppression**: If there's a comment on the same line as the `make` call, suppress.
+
+**Violation message**: `"channel created with buffer size > 1 — document the reason for this specific capacity with a comment"`
+
+**Implementation note**: `Args[1]` is the size arg. Check `strconv.ParseInt(lit.Value, 10, 64) > 1`.
+If parsing fails (shouldn't for a BasicLit INT), skip. If the size arg is not a BasicLit (it's an
+Ident or expression), skip — we can only flag statically knowable sizes.
+
+---
+
+## 2026-06-03 00:35:00 - Recommendation
+
+### Chosen Approach: New files per batch op + rules added to checks.go
+
+**Rationale:**
+
+For batch ops: Approach 1 (new files) matches the existing one-op-per-file convention precisely.
+The planner and implementer can find them predictably. The ops themselves are small (~60-80 lines
+each) so three small files is the right split.
+
+For rules: Approach A (add to checks.go) keeps the existing invariant that `builtinRules` map
+and rule functions are co-located. Adding to checks.go requires the smallest changeset and is
+consistent with ruleErrorHandled.
+
+**Implementation Strategy:**
+
+1. **Create ops/insert_many.go** with `InsertOp`, `ASTInsertManyArgs`, `HandleASTInsertMany`:
+   - Pre-parse all ops (decode steps + kindNode) before editor.Edit
+   - In Edit callback: loop over ops, navigate + mutate each, return first error
+   - enforcePostWrite once after Edit
+
+2. **Create ops/replace_many.go** with `ReplaceOp`, `ASTReplaceManyArgs`, `HandleASTReplaceMMany`:
+   - Same pattern: pre-parse, single Edit, loop inside callback
+   - replaceInParent is already in replace.go and accessible within ops package
+
+3. **Create ops/delete_many.go** with `DeleteOp`, `ASTDeleteManyArgs`, `HandleASTDeleteMany`:
+   - Same pattern: pre-parse paths, single Edit, loop over ops calling deleteFromList
+
+4. **Edit ops/checks.go**: add 3 rule functions + 3 entries in builtinRules map:
+   ```go
+   var builtinRules = map[string]ruleFunc{
+       "error_handled":               ruleErrorHandled,
+       "type_assertion_not_checked":  ruleTypeAssertionNotChecked,
+       "mutex_not_embedded":          ruleMutexNotEmbedded,
+       "channel_size_not_one_or_zero": ruleChannelSizeNotOneOrZero,
+   }
+   ```
+
+5. **Edit daemon/daemon.go**: add `"ast_insert_many"`, `"ast_replace_many"`, `"ast_delete_many"`
+   to both `buildDispatch()` map and `writeTools` map
+
+6. **Edit cmd/help.go**: add three new ToolInfo entries to ToolRegistry
+
+**Key Decisions:**
+
+- **Pre-parse ops before Edit**: Fail fast on bad JSON/AST before touching the file. If kindNode
+  construction fails for op #3, we never open the file. Decode paths and nodes in a pre-loop,
+  store in a slice of structs, then use inside Edit.
+
+- **Path ordering — last write wins**: Documented above. Conflicting deletes are a caller error
+  and will surface as NavigateError inside the Edit callback, aborting the batch. This is correct.
+
+- **enforcePostWrite once**: The batch is one write. Same as single ops.
+
+- **Delete ordering**: For ast_delete_many, if two ops would delete indices 0 and 1 from the
+  same list, the first delete shifts index 1 to index 0. The second Navigate for the original
+  index 1 path would then find what was formerly at index 2. The caller is responsible for
+  ordering deletes correctly (highest index first, or use paths not indices). This is consistent
+  with single-op behavior and should be documented.
+
+- **No dir routing for *_many**: Unlike ast_insert (which has dir-based routing to ast_place),
+  the *_many ops require an explicit file. Multi-file batching is out of scope for this feature.
+
+- **type_assertion_not_checked detects only AssignStmt form**: Type asserts in call args,
+  return stmts, etc. are excluded. Single-value assignment is the most dangerous and common form.
+
+- **mutex_not_embedded checks SelectorExpr only**: `sync.Mutex` is the only form. Named fields
+  like `mu sync.Mutex` are safe (has Names). Pointer form `*sync.Mutex` is also flagged.
+
+- **channel_size_not_one_or_zero skips non-literal sizes**: Variable-sized channels (e.g.,
+  `make(chan T, cap)`) are not flagged. This avoids false positives on dynamically-sized buffers.
+
+**Risks Identified:**
+
+- **Delete index shifting in ast_delete_many**: If caller provides delete ops without understanding
+  that earlier deletes shift later indices, they'll get wrong behavior. Mitigation: document clearly
+  in tool description that ops are applied in order and indices shift after each delete. Recommend
+  callers sort delete paths from highest index to lowest within the same parent list.
+
+- **mutex_not_embedded false positive**: If someone imports a non-sync package but has a type
+  named Mutex or RWMutex embedded (`mypackage.Mutex`), it would NOT be flagged because we check
+  both the selector (`sel`) AND the qualifier (`x == "sync"`). So actually no false positive here.
+
+- **type assertion in type switch**: `switch x := i.(type)` uses `TypeSwitchStmt.Assign` not
+  an `AssignStmt`. `ast.Inspect` visits `TypeSwitchStmt` first, then descends. The `Assign`
+  field of `TypeSwitchStmt` is a `*ast.AssignStmt` internally BUT the Rhs[0] is a
+  `*ast.TypeAssertExpr` with `Type == nil`. Since we require `len(Lhs) == 1` AND the expr is a
+  `TypeAssertExpr` — wait, does ast.Inspect visit the Assign of TypeSwitchStmt? Yes it does.
+  We need to guard: if `assign.Rhs[0].(*ast.TypeAssertExpr).Type == nil`, skip (it's x.(type)).
+  Add this check.
+
+- **channel_size_not_one_or_zero: negative literal**: `make(chan T, -1)` would have a negative
+  BasicLit value. `strconv.ParseInt > 1` would return false, so not flagged. Correct behavior.
+
+**Open Questions:**
+
+- Should ast_delete_many require callers to sort paths, or should we sort internally?
+  Recommendation: document the behavior, don't sort internally. Sorting by path is complex
+  (would require understanding which paths are in the same list). Callers using ast_query to
+  find nodes know their indices and can sort.
+
+- Should *_many tools support a dry_run field? Yes — consistent with single ops. Affects
+  whether editor.Edit writes or just returns diff.
+
+- Should type_assertion_not_checked also flag `var t T = i.(T)` (ValueSpec form)? The ValueSpec
+  form is unusual and less risky (not commonly written that way). Exclude for now — focus on
+  AssignStmt which covers `:=` and `=` assignment. Can add later.
+
+---
+
+## 2026-06-03 00:40:00 - BRAINSTORM COMPLETE
+
+**Status:** Complete
+**Recommendation:**
+  - Batch ops: 3 new files (ops/insert_many.go, ops/replace_many.go, ops/delete_many.go)
+  - Rules: add to ops/checks.go (4th entry in builtinRules map)
+  - Daemon: add 3 entries to buildDispatch + writeTools
+  - Help: add 3 ToolInfo entries
+**Next Phase:** PLAN
+
+Key findings for the implementer:
+
+1. editor.Edit signature: `Edit(path string, dryRun bool, fn func(*ast.File, *token.FileSet) error) (Result, error)` — all mutations chain in ONE callback for atomicity.
+
+2. Pre-parse all ops before calling editor.Edit: decode path steps and unmarshal kindNode in a setup loop, abort before touching the file if any decode fails.
+
+3. replaceInParent and deleteFromList are unexported in replace.go and delete.go respectively, but accessible within the ops package — no need to move or export them.
+
+4. type_assertion_not_checked: guard `TypeAssertExpr.Type != nil` to skip type-switch form (x.(type) has Type==nil). Flag single-LHS AssignStmt only.
+
+5. mutex_not_embedded: check `len(field.Names) == 0` (embedded) + `SelectorExpr.X.Name == "sync"` + `SelectorExpr.Sel.Name in {"Mutex","RWMutex"}`. Also check StarExpr wrapping a SelectorExpr.
+
+6. channel_size_not_one_or_zero: make(chan T, N) where N is a BasicLit INT > 1 and no comment on same line. Skip non-literal sizes.
+
+7. enforcePostWrite runs once per batch, same as single ops.
+
+8. buildDispatch() and writeTools both need entries for ast_insert_many, ast_replace_many, ast_delete_many.
+
+9. Delete ordering: document that ops apply in order; earlier deletes shift indices. Callers should sort delete ops from highest to lowest index within the same parent list.
+
+10. All three *_many ops support dry_run — consistent with single ops.
+
+Ready for workflow-planner agent to create detailed implementation plan.
