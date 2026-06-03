@@ -28,7 +28,9 @@ func SetDefaultChecksConfig(c hooks.ChecksConfig) {
 		}
 		if _, ok := builtinRules[name]; !ok {
 			if _, ok2 := typeAwareRules[name]; !ok2 {
-				fmt.Fprintf(os.Stderr, "grv: unknown check rule %q (known: %s)\n", name, knownRuleNames())
+				if _, ok3 := ssaRules[name]; !ok3 {
+					fmt.Fprintf(os.Stderr, "grv: unknown check rule %q (known: %s)\n", name, knownRuleNames())
+				}
 			}
 		}
 	}
@@ -96,8 +98,10 @@ func checkFile(absFile string, enforce []string) ([]Violation, error) {
 		return nil, err
 	}
 	out := runChecks(fset, src, f, absFile, enforce)
-	// Run type-aware rules if any are active; degrade gracefully on failure.
+	// Run type-aware rules (go/types) — degrade gracefully on failure.
 	out = append(out, runTypeAwareChecks(absFile, enforce)...)
+	// Run SSA rules (go/ssa) — degrade gracefully on failure.
+	out = append(out, runSSAChecks(absFile, enforce)...)
 	return out, nil
 }
 
@@ -109,6 +113,8 @@ func enforcePostWrite(absFile string, originalContent []byte, enforce []string) 
 	if len(enforce) == 0 {
 		return nil
 	}
+	// Invalidate SSA cache — the file changed, rebuild needed.
+	InvalidateSSACache(absFile)
 	violations, err := checkFile(absFile, enforce)
 	if err != nil || len(violations) == 0 {
 		return nil
@@ -166,11 +172,14 @@ func resolveRules(enforce []string) []ruleFunc {
 }
 
 func knownRuleNames() string {
-	names := make([]string, 0, len(builtinRules)+len(typeAwareRules))
+	names := make([]string, 0, len(builtinRules)+len(typeAwareRules)+len(ssaRules))
 	for n := range builtinRules {
 		names = append(names, n)
 	}
 	for n := range typeAwareRules {
+		names = append(names, n)
+	}
+	for n := range ssaRules {
 		names = append(names, n)
 	}
 	return strings.Join(names, ", ")
