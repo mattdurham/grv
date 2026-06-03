@@ -44,45 +44,56 @@ type ASTPlaceResult struct {
 //   - var declaration          → constants.go (or existing var-heavy file)
 //   - free function            → file with most functions, or <pkgname>.go
 func HandleASTPlace(args ASTPlaceArgs) (json.RawMessage, error) {
+	result, _, err := handleASTPlaceWithFile(args, nil)
+	return result, err
+}
+
+// handleASTPlaceWithFile is like HandleASTPlace but also enforces check rules
+// after a successful write, restoring the original file on violation.
+// enforce is the rule list from DefaultChecksConfig.Enforce; pass nil to skip.
+func handleASTPlaceWithFile(args ASTPlaceArgs, enforce []string) (json.RawMessage, string, error) {
 	if args.Dir == "" {
-		return nil, fmt.Errorf("dir is required")
+		return nil, "", fmt.Errorf("dir is required")
 	}
 
 	kindNode, err := kinds.UnmarshalNode(args.Node)
 	if err != nil {
-		return nil, fmt.Errorf("parse node: %w", err)
+		return nil, "", fmt.Errorf("parse node: %w", err)
 	}
 	if kindNode == nil {
-		return nil, fmt.Errorf("node is required")
+		return nil, "", fmt.Errorf("node is required")
 	}
 	newDecl, err := kindNode.ToAST()
 	if err != nil {
-		return nil, fmt.Errorf("ToAST: %w", err)
+		return nil, "", fmt.Errorf("ToAST: %w", err)
 	}
 	astDecl, ok := newDecl.(ast.Decl)
 	if !ok {
-		return nil, fmt.Errorf("node must be a declaration, got %T", newDecl)
+		return nil, "", fmt.Errorf("node must be a declaration, got %T", newDecl)
 	}
 
 	pkg, err := scanPackage(args.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("scan dir: %w", err)
+		return nil, "", fmt.Errorf("scan dir: %w", err)
 	}
 
 	targetFile, reason, created := routeDecl(astDecl, pkg, args.Dir)
 
+	// Read original content before any write so we can restore on check failure.
+	var originalContent []byte
+	if !created {
+		originalContent, _ = os.ReadFile(targetFile)
+	}
+
 	// Create the file with a package declaration if it doesn't exist yet.
-	// We always write the stub (even for dry_run) so editor.Edit can parse it;
-	// if dry_run, we remove it on failure or let the diff speak for itself.
 	if created {
 		content := fmt.Sprintf("package %s\n", pkg.pkgName)
 		if err := os.WriteFile(targetFile, []byte(content), 0644); err != nil {
-			return nil, fmt.Errorf("create %s: %w", targetFile, err)
+			return nil, "", fmt.Errorf("create %s: %w", targetFile, err)
 		}
-		// For dry_run: remove the stub if the edit fails or after we have the diff.
+		originalContent = []byte(content)
 		if args.DryRun {
 			defer func() {
-				// Only remove if the file is still just the package stub
 				data, _ := os.ReadFile(targetFile)
 				if string(data) == content {
 					os.Remove(targetFile)
@@ -96,7 +107,7 @@ func HandleASTPlace(args ASTPlaceArgs) (json.RawMessage, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("insert into %s: %w", targetFile, err)
+		return nil, "", fmt.Errorf("insert into %s: %w", targetFile, err)
 	}
 
 	rel, _ := filepath.Rel(args.Dir, targetFile)
@@ -109,7 +120,23 @@ func HandleASTPlace(args ASTPlaceArgs) (json.RawMessage, error) {
 		Diff:      result.Diff,
 		Changed:   result.Changed,
 	}
-	return okResult(res)
+	// Post-write enforcement: re-parse formatted output, restore on violation.
+	if !args.DryRun && result.Changed && len(enforce) > 0 {
+		if violations, _ := checkFile(targetFile, enforce); len(violations) > 0 {
+			_ = editor.WriteAtomic(targetFile, originalContent)
+			return nil, "", violationsToError(violations)
+		}
+	}
+
+	raw, marshalErr := okResult(res)
+	if marshalErr != nil {
+		return nil, "", marshalErr
+	}
+	writtenFile := ""
+	if !args.DryRun && result.Changed {
+		writtenFile = targetFile
+	}
+	return raw, writtenFile, nil
 }
 
 // routeDecl selects the target file and whether it needs to be created.

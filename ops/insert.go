@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 
 	"github.com/mattdurham/grv/editor"
 	"github.com/mattdurham/grv/kinds"
@@ -34,14 +35,15 @@ type ASTInsertArgs struct {
 // HandleASTInsert implements the ast_insert tool.
 func HandleASTInsert(args ASTInsertArgs) (json.RawMessage, error) {
 	// Auto-route: Dir given (or daemon-injected) but no explicit File.
+	// handleASTPlaceWithFile runs post-write enforcement internally.
 	if args.File == "" && args.Dir != "" {
-		placeResult, err := HandleASTPlace(ASTPlaceArgs{
+		placeResult, _, err := handleASTPlaceWithFile(ASTPlaceArgs{
 			Dir:    args.Dir,
 			Node:   args.Node,
 			DryRun: args.DryRun,
-		})
+		}, DefaultChecksConfig.Enforce)
 		if err != nil {
-			return nil, fmt.Errorf("auto-route: %w", err)
+			return errResult(err.Error())
 		}
 		return placeResult, nil
 	}
@@ -64,6 +66,7 @@ func HandleASTInsert(args ASTInsertArgs) (json.RawMessage, error) {
 		return errResult("node is required")
 	}
 
+	original, _ := os.ReadFile(args.File)
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, _ *token.FileSet) error {
 		target, parentCtx, navErr := selector.Navigate(f, steps)
 		if navErr != nil {
@@ -75,11 +78,18 @@ func HandleASTInsert(args ASTInsertArgs) (json.RawMessage, error) {
 		}
 		// Try inserting into the target node itself first (it may be a list container).
 		// Fall back to inserting via the parent context.
-		if err := insertIntoNode(target, newNode, args.Index); err == nil {
-			return nil
+		if err := insertIntoNode(target, newNode, args.Index); err != nil {
+			if err2 := insertIntoList(parentCtx, newNode, args.Index); err2 != nil {
+				return err2
+			}
 		}
-		return insertIntoList(parentCtx, newNode, args.Index)
+		return nil
 	})
+	if err == nil && !args.DryRun && result.Changed {
+		if err2 := enforcePostWrite(args.File, original, DefaultChecksConfig.Enforce); err2 != nil {
+			err = err2
+		}
+	}
 	if err != nil {
 		if ne, ok := err.(*selector.NavigateError); ok {
 			return navErrResult(ne)

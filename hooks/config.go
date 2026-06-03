@@ -9,40 +9,39 @@ import (
 	"time"
 )
 
-type HookConfig struct
-
-// HookConfig describes a single configured hook.
-{
-	Name      string
-	Command   []string
-	Scope     string
-	Cache     bool
-	Immutable bool
-	Timeout   time.Duration
-	Kinds     []string
+// ChecksConfig holds rule enforcement settings loaded from grv.toml [checks].
+type ChecksConfig struct {
+	Enforce []string // rule names to enforce, or ["all"] for every built-in rule
 }
 
-// "file" | "all"
+// HookConfig describes a single configured hook.
+type HookConfig struct {
+	Name        string
+	Command     []string
+	Scope       string        // "file" | "all"
+	Cache       bool
+	Immutable   bool
+	Timeout     time.Duration // default 5s if zero after parsing
+	Kinds       []string      // optional kind filter
+	StripFields []string      // JSON keys to remove from each result object before storing
+}
 
-// default 5s if zero after parsing
-// optional kind filter
-
-// LoadConfig searches for a goast.toml config file starting at dir, then walking
+// LoadConfig searches for a grv.toml config file starting at dir, then walking
 // up to the go.mod root, then checking ~/.grv/config.toml.
-// Returns nil, nil if no config file is found (config is optional).
-func LoadConfig(dir string) ([]HookConfig, error) {
+// Returns nil configs and zero ChecksConfig if no config file is found.
+func LoadConfig(dir string) ([]HookConfig, ChecksConfig, error) {
 	path := findConfigFile(dir)
 	if path == "" {
-		return nil, nil
+		return nil, ChecksConfig{}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, ChecksConfig{}, err
 	}
 	return parseGRVTOML(data)
 }
 
-// findConfigFile returns the first goast.toml found: dir/goast.toml, then
+// findConfigFile returns the first grv.toml found: dir/grv.toml, then
 // walking up to the go.mod root, then ~/.grv/config.toml. Returns "" if not found.
 func findConfigFile(dir string) string {
 	abs, err := filepath.Abs(dir)
@@ -82,10 +81,13 @@ func findConfigFile(dir string) string {
 	return ""
 }
 
-// parseGRVTOML parses a TOML file containing [[hooks]] array-of-tables.
-func parseGRVTOML(data []byte) ([]HookConfig, error) {
+// parseGRVTOML parses a TOML file containing [[hooks]] array-of-tables and
+// an optional [checks] flat-table section.
+func parseGRVTOML(data []byte) ([]HookConfig, ChecksConfig, error) {
 	var configs []HookConfig
 	var current *HookConfig
+	var checks ChecksConfig
+	inChecksSection := false
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
@@ -100,6 +102,27 @@ func parseGRVTOML(data []byte) ([]HookConfig, error) {
 				configs = append(configs, *current)
 			}
 			current = &HookConfig{}
+			inChecksSection = false
+			continue
+		}
+
+		if line == "[checks]" {
+			if current != nil && current.Name != "" {
+				configs = append(configs, *current)
+				current = nil
+			}
+			inChecksSection = true
+			continue
+		}
+
+		if inChecksSection {
+			key, value, ok := parseLine(line)
+			if !ok {
+				continue
+			}
+			if key == "enforce" {
+				checks.Enforce = parseInlineArray(value)
+			}
 			continue
 		}
 
@@ -131,6 +154,8 @@ func parseGRVTOML(data []byte) ([]HookConfig, error) {
 			current.Timeout = d
 		case "kinds":
 			current.Kinds = parseInlineArray(value)
+		case "strip_fields":
+			current.StripFields = parseInlineArray(value)
 		}
 	}
 
@@ -145,7 +170,7 @@ func parseGRVTOML(data []byte) ([]HookConfig, error) {
 		}
 	}
 
-	return configs, scanner.Err()
+	return configs, checks, scanner.Err()
 }
 
 // parseLine splits "key = value" into (key, value, true). Returns (_, _, false) on failure.

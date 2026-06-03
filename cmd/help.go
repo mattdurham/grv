@@ -32,7 +32,7 @@ var ToolRegistry = []ToolInfo{
 			{Name: "file", Type: "string", Required: false, Desc: "Path to Go source file (alternative to namespace)"},
 			{Name: "dir", Type: "string", Required: false, Desc: "Directory path to list all declarations (alternative to namespace)"},
 		},
-		Notes: "Provide namespace, file, or dir. namespace routes to dir or file automatically.",
+		Notes: "Provide namespace, file, or dir. namespace routes to dir or file automatically. Each FuncDecl and TypeDecl includes git_churn in its Meta when running via daemon.",
 	},
 	{
 		Name: "ast_query",
@@ -52,12 +52,23 @@ var ToolRegistry = []ToolInfo{
 		},
 	},
 	{
+		Name: "ast_check",
+		Desc: "Run configured rule checks against a file or directory",
+		Args: []ArgInfo{
+			{Name: "file", Type: "string", Required: false, Desc: "Path to Go source file"},
+			{Name: "dir", Type: "string", Required: false, Desc: "Directory to check all .go files"},
+		},
+		Notes: "Returns JSON array of {file,line,rule,message} violations. Rules are configured in grv.toml under [checks] enforce=[\"all\"] or enforce=[\"error_handled\"]. Default is no rules enforced. Enabled rules also run automatically on ast_insert and ast_replace, rejecting the write on any violation.",
+	},
+	{
 		Name: "ast_meta",
-		Desc: "Return metadata (line, col, size, complexity) for a node",
+		Desc: "Return metadata (line, col, complexity, git_churn) for a node",
 		Args: []ArgInfo{
 			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
 			{Name: "path", Type: "[]step", Required: true, Desc: "Selector path to the node"},
+			{Name: "hooks", Type: "[]string", Required: false, Desc: "Hook name allowlist (e.g. [\"lth\"]); omit for all hooks"},
 		},
+		Notes: "Includes git_churn: number of commits that touched the node's line range. Hook results (e.g. lth.results) are merged when the daemon is running.",
 	},
 	{
 		Name: "ast_insert",

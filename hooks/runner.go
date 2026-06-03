@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +19,7 @@ import (
 type RunnerInterface interface {
 	RunFile(absFile string) map[string]interface{}
 	Invalidate(absFile string)
+	Warmup(dir string)
 }
 
 // Runner executes configured hooks for a file and maintains a result cache.
@@ -100,6 +104,9 @@ func
 			result[cfg.Name+".error"] = "json: " + err.Error()
 			continue
 		}
+		if len(cfg.StripFields) > 0 {
+			hookResult = stripFields(hookResult, cfg.StripFields)
+		}
 		for k, v := range hookResult {
 			result[cfg.Name+"."+k] = v
 		}
@@ -119,6 +126,34 @@ func
 (r *Runner) Invalidate(absFile string) {
 	r.cache.Invalidate(absFile)
 	r.gitCache.Invalidate(absFile)
+}
+
+// stripFields removes the named keys from every object in the result map.
+// Operates on the top-level map and on each element of any array values.
+func stripFields(m map[string]interface{}, fields []string) map[string]interface{} {
+	drop := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		drop[f] = true
+	}
+	stripFromMap := func(obj map[string]interface{}) {
+		for _, f := range fields {
+			delete(obj, f)
+		}
+	}
+	for k, v := range m {
+		switch val := v.(type) {
+		case map[string]interface{}:
+			stripFromMap(val)
+		case []interface{}:
+			for _, elem := range val {
+				if obj, ok := elem.(map[string]interface{}); ok {
+					stripFromMap(obj)
+				}
+			}
+		}
+		_ = drop[k] // suppress unused warning
+	}
+	return m
 }
 
 // parseHookOutput unmarshals hook stdout into a flat map.
@@ -141,6 +176,31 @@ func parseHookOutput(b []byte) (map[string]interface{}, error) {
 	}
 	return m, nil
 }
+// Warmup walks all .go files under dir and pre-populates the hook cache.
+// Runs up to 4 hook subprocesses concurrently. Intended to be called in a
+// background goroutine at daemon startup so first queries hit the cache.
+func (r *Runner) Warmup(dir string) {
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		if strings.Contains(path, "/vendor/") {
+			return nil
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			r.RunFile(p)
+		}(path)
+		return nil
+	})
+	wg.Wait()
+}
+
 func (r *Runner) headHash() string {
 	if r.repoRoot == "" {
 		return ""

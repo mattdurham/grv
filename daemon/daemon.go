@@ -53,12 +53,17 @@ func NewServer(dir, sockPath, pidPath, logPath string) *Server {
 	// Detect git repository root (best-effort; empty string if not a git repo)
 	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
 		s.repoRoot = strings.TrimSpace(string(out))
+		ops.SetDefaultRepoRoot(s.repoRoot)
 	}
 
 	// Load hook config and create runner (optional — no error if config absent)
-	if configs, err := hooks.LoadConfig(dir); err == nil && len(configs) > 0 {
-		s.hookRunner = hooks.New(configs, s.repoRoot)
-		ops.SetDefaultHookRunner(s.hookRunner)
+	if configs, checksConfig, err := hooks.LoadConfig(dir); err == nil {
+		if len(configs) > 0 {
+			s.hookRunner = hooks.New(configs, s.repoRoot)
+			ops.SetDefaultHookRunner(s.hookRunner)
+			go s.hookRunner.Warmup(dir)
+		}
+		ops.SetDefaultChecksConfig(checksConfig)
 	}
 
 	s.dispatch = s.buildDispatch()
@@ -107,6 +112,7 @@ func (s *Server) buildDispatch() map[string]func(json.RawMessage) (json.RawMessa
 		"file_read":          makeHandler(ops.HandleFileRead),
 		"file_write":         makeHandler(ops.HandleFileWrite),
 		"ast_directory":      makeHandler(ops.HandleASTDirectory),
+		"ast_check":          makeHandler(ops.HandleASTCheck),
 	}
 }
 

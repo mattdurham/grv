@@ -28,7 +28,7 @@ timeout = "2s"
 		t.Fatal(err)
 	}
 
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
@@ -70,7 +70,7 @@ timeout = "2s"
 
 func TestLoadConfig_MissingFile(t *testing.T) {
 	dir := t.TempDir()
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestLoadConfig_EmptyFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(""), 0644); err != nil {
 		t.Fatal(err)
 	}
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +104,7 @@ scope   = "file"
 	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
 		t.Fatal(err)
 	}
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ kinds   = ["FuncDecl", "TypeDecl"]
 	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
 		t.Fatal(err)
 	}
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestLoadConfig_WalkUp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "goast.toml"), []byte(toml), 0644); err != nil {
 		t.Fatal(err)
 	}
-	configs, err := LoadConfig(sub)
+	configs, _, err := LoadConfig(sub)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +177,7 @@ scope   = "file"
 	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
 		t.Fatal(err)
 	}
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -205,7 +205,7 @@ scope   = "file"
 	if err := os.WriteFile(filepath.Join(dir, "goast.toml"), []byte(toml), 0644); err != nil {
 		t.Fatal(err)
 	}
-	configs, err := LoadConfig(dir)
+	configs, _, err := LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
@@ -217,5 +217,87 @@ scope   = "file"
 	}
 	if configs[1].Immutable {
 		t.Error("Immutable: want false for second hook")
+	}
+}
+
+func TestLoadConfig_ChecksEnforce(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[checks]
+enforce = ["error_handled"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, checks, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig error: %v", err)
+	}
+	if len(checks.Enforce) != 1 || checks.Enforce[0] != "error_handled" {
+		t.Errorf("Enforce: want [error_handled], got %v", checks.Enforce)
+	}
+}
+
+func TestLoadConfig_ChecksEnforceAll(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[checks]
+enforce = ["all"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, checks, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig error: %v", err)
+	}
+	if len(checks.Enforce) != 1 || checks.Enforce[0] != "all" {
+		t.Errorf("Enforce: want [all], got %v", checks.Enforce)
+	}
+}
+
+func TestLoadConfig_HooksAndChecks(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[[hooks]]
+name    = "lth"
+command = ["echo", "hi"]
+scope   = "file"
+
+[checks]
+enforce = ["error_handled"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configs, checks, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig error: %v", err)
+	}
+	if len(configs) != 1 || configs[0].Name != "lth" {
+		t.Errorf("hooks: want [lth], got %v", configs)
+	}
+	if len(checks.Enforce) != 1 || checks.Enforce[0] != "error_handled" {
+		t.Errorf("checks: want [error_handled], got %v", checks.Enforce)
+	}
+}
+
+func TestLoadConfig_NoChecksSection(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[[hooks]]
+name    = "lth"
+command = ["echo", "hi"]
+scope   = "file"
+`
+	if err := os.WriteFile(filepath.Join(dir, "grv.toml"), []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, checks, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig error: %v", err)
+	}
+	if len(checks.Enforce) != 0 {
+		t.Errorf("expected empty Enforce when no [checks] section, got %v", checks.Enforce)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Expand replaces {file}, {dir}, {repo_name}, {repo_path}, {namespace}, {pkg}
+// Expand replaces {file}, {dir}, {repo_name}, {repo_path}, {namespace}, {pkg}, {project}
 // in each arg. Also expands a leading ~/ to the home directory.
 // Unknown placeholders are left unchanged.
 func Expand(args []string, vars map[string]string) []string {
@@ -35,6 +35,7 @@ func CollectVars(absFile, repoRoot string) map[string]string {
 		"repo_name": "",
 		"pkg":       scanPackageName(absFile),
 		"namespace": hookPackageImportPath(filepath.Dir(absFile)),
+		"project":   hookModuleName(filepath.Dir(absFile)),
 	}
 	if repoRoot != "" {
 		vars["repo_name"] = filepath.Base(repoRoot)
@@ -86,6 +87,29 @@ func hookPackageImportPath(dir string) string {
 					return mod
 				}
 				return mod + "/" + filepath.ToSlash(rel)
+			}
+		}
+	}
+	return ""
+}
+
+// hookModuleName returns the bare module name from the nearest go.mod
+// (e.g. "github.com/grafana/tempo"), without any subpackage path appended.
+func hookModuleName(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	for d := abs; d != filepath.Dir(d); d = filepath.Dir(d) {
+		gomod := filepath.Join(d, "go.mod")
+		data, err := os.ReadFile(gomod)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "module ") {
+				return strings.TrimSpace(strings.TrimPrefix(line, "module"))
 			}
 		}
 	}

@@ -105,6 +105,7 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 	var items []ASTListItem
 	for _, decl := range f.Decls {
 		pos := fset.Position(decl.Pos())
+		endLine := fset.Position(decl.End()).Line
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			item := ASTListItem{
@@ -113,6 +114,7 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 				Line:      pos.Line,
 				Namespace: ns(d.Name.Name),
 				Readonly:  ro,
+				Meta:      meta.Meta{"git_churn": gitChurn(args.File, pos.Line, endLine)},
 			}
 			if d.Recv != nil && len(d.Recv.List) > 0 {
 				item.Recv = recvTypeString(d.Recv.List[0])
@@ -137,12 +139,14 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 			case token.TYPE:
 				for _, spec := range d.Specs {
 					ts := spec.(*ast.TypeSpec)
+					specPos := fset.Position(ts.Pos()).Line
 					items = append(items, ASTListItem{
 						Kind:      "TypeDecl",
 						Name:      ts.Name.Name,
-						Line:      fset.Position(ts.Pos()).Line,
+						Line:      specPos,
 						Namespace: ns(ts.Name.Name),
 						Readonly:  ro,
+						Meta:      meta.Meta{"git_churn": gitChurn(args.File, specPos, fset.Position(ts.End()).Line)},
 					})
 				}
 			case token.VAR:
@@ -157,7 +161,12 @@ func HandleASTList(args ASTListArgs) (json.RawMessage, error) {
 		hookMeta := mergeHookMeta(meta.Meta{}, args.File, nil)
 		if len(hookMeta) > 0 {
 			for i := range items {
-				items[i].Meta = hookMeta
+				for k, v := range hookMeta {
+					if items[i].Meta == nil {
+						items[i].Meta = meta.Meta{}
+					}
+					items[i].Meta[k] = v
+				}
 			}
 		}
 	}
@@ -235,6 +244,9 @@ func HandleASTQuery(args ASTQueryArgs) (json.RawMessage, error) {
 
 	// Compute metadata
 	resp.Meta = meta.Compute(fset, src, node, nil, len(steps))
+	if start, _ := resp.Meta["line"].(int); start > 0 {
+		resp.Meta["git_churn"] = gitChurn(args.File, start, resp.Meta["end_line"].(int))
+	}
 	resp.Meta = mergeHookMeta(resp.Meta, args.File, nil)
 
 	return okResult(resp)
@@ -315,6 +327,9 @@ func HandleASTMeta(args ASTMetaArgs) (json.RawMessage, error) {
 	}
 
 	m := meta.Compute(fset, src, node, nil, len(steps))
+	if start, _ := m["line"].(int); start > 0 {
+		m["git_churn"] = gitChurn(args.File, start, m["end_line"].(int))
+	}
 	m = mergeHookMeta(m, args.File, args.Hooks)
 	return okResult(m)
 }
