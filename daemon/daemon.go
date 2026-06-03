@@ -91,8 +91,11 @@ func (s *Server) buildDispatch() map[string]func(json.RawMessage) (json.RawMessa
 		"ast_query_many":     makeHandler(ops.HandleASTQueryMany),
 		"ast_meta":           makeHandler(ops.HandleASTMeta),
 		"ast_insert":         makeHandler(ops.HandleASTInsert),
+		"ast_insert_many":    makeHandler(ops.HandleASTInsertMany),
 		"ast_replace":        makeHandler(ops.HandleASTReplace),
+		"ast_replace_many":   makeHandler(ops.HandleASTReplaceMany),
 		"ast_delete":         makeHandler(ops.HandleASTDelete),
+		"ast_delete_many":    makeHandler(ops.HandleASTDeleteMany),
 		"ast_add_import":     makeHandler(ops.HandleAddImport),
 		"ast_delete_import":  makeHandler(ops.HandleDeleteImport),
 		"ast_list_imports":   makeHandler(ops.HandleListImports),
@@ -212,11 +215,14 @@ func (s *Server) dispatchRequest(req Request) Response {
 
 // writeTools is the set of tools that modify file content.
 var writeTools = map[string]bool{
-	"ast_insert":  true,
-	"ast_replace": true,
-	"ast_delete":  true,
-	"ast_rename":  true,
-	"file_write":  true,
+	"ast_insert":       true,
+	"ast_insert_many":  true,
+	"ast_replace":      true,
+	"ast_replace_many": true,
+	"ast_delete":       true,
+	"ast_delete_many":  true,
+	"ast_rename":       true,
+	"file_write":       true,
 }
 
 func isWriteTool(tool string) bool {

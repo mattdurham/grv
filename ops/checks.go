@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mattdurham/grv/editor"
@@ -128,7 +129,10 @@ type ruleFunc func(fset *token.FileSet, src []byte, f *ast.File, absFile string)
 
 // builtinRules is the registry of all built-in rules by name.
 var builtinRules = map[string]ruleFunc{
-	"error_handled": ruleErrorHandled,
+	"error_handled":             ruleErrorHandled,
+	"type_assertion_not_checked": ruleTypeAssertionNotChecked,
+	"mutex_not_embedded":        ruleMutexNotEmbedded,
+	"channel_size_not_one_or_zero": ruleChannelSizeNotOneOrZero,
 }
 
 // resolveRules expands the enforce list into concrete ruleFuncs.
@@ -216,6 +220,184 @@ func ruleErrorHandled(fset *token.FileSet, _ []byte, f *ast.File, absFile string
 			Line:    line,
 			Rule:    "error_handled",
 			Message: "error return discarded with _ — handle the error or add a comment explaining why",
+		})
+		return true
+	})
+	return violations
+}
+
+// ruleTypeAssertionNotChecked flags type assertions that discard the boolean ok value.
+//
+// Two patterns are flagged:
+//  1. Single-LHS assign: v := x.(T) — the ok form v, ok := x.(T) is not flagged.
+//  2. Bare expression statement: x.(T) used as a statement (always panics on mismatch).
+//
+// x.(type) switch expressions (TypeAssertExpr with nil Type) are never flagged.
+// Suppression: add any comment on the same line.
+func ruleTypeAssertionNotChecked(fset *token.FileSet, _ []byte, f *ast.File, absFile string) []Violation {
+	commentLines := make(map[int]bool)
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			commentLines[fset.Position(c.Slash).Line] = true
+		}
+	}
+
+	var violations []Violation
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			// Single-LHS assign with a TypeAssertExpr on RHS is unchecked.
+			if len(node.Lhs) != 1 || len(node.Rhs) != 1 {
+				return true
+			}
+			ta, ok := node.Rhs[0].(*ast.TypeAssertExpr)
+			if !ok || ta.Type == nil {
+				return true
+			}
+			line := fset.Position(node.Pos()).Line
+			if commentLines[line] {
+				return true
+			}
+			violations = append(violations, Violation{
+				File:    absFile,
+				Line:    line,
+				Rule:    "type_assertion_not_checked",
+				Message: "type assertion result not checked — use v, ok := x.(T) to avoid a panic on mismatch",
+			})
+		case *ast.ExprStmt:
+			ta, ok := node.X.(*ast.TypeAssertExpr)
+			if !ok || ta.Type == nil {
+				return true
+			}
+			line := fset.Position(node.Pos()).Line
+			if commentLines[line] {
+				return true
+			}
+			violations = append(violations, Violation{
+				File:    absFile,
+				Line:    line,
+				Rule:    "type_assertion_not_checked",
+				Message: "type assertion used as statement always panics on mismatch — assign the result instead",
+			})
+		}
+		return true
+	})
+	return violations
+}
+
+// ruleMutexNotEmbedded flags anonymous (embedded) sync.Mutex or sync.RWMutex fields in structs.
+//
+// Embedding a mutex exposes Lock/Unlock on the outer type, which widens its API
+// unintentionally. Prefer a named field: mu sync.Mutex.
+// Suppression: add any comment on the same line as the field.
+func ruleMutexNotEmbedded(fset *token.FileSet, _ []byte, f *ast.File, absFile string) []Violation {
+	commentLines := make(map[int]bool)
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			commentLines[fset.Position(c.Slash).Line] = true
+		}
+	}
+
+	var violations []Violation
+	ast.Inspect(f, func(n ast.Node) bool {
+		st, ok := n.(*ast.StructType)
+		if !ok || st.Fields == nil {
+			return true
+		}
+		for _, field := range st.Fields.List {
+			// Anonymous field: no names.
+			if len(field.Names) != 0 {
+				continue
+			}
+			if !isMutexType(field.Type) {
+				continue
+			}
+			line := fset.Position(field.Pos()).Line
+			if commentLines[line] {
+				continue
+			}
+			violations = append(violations, Violation{
+				File:    absFile,
+				Line:    line,
+				Rule:    "mutex_not_embedded",
+				Message: "sync.Mutex/sync.RWMutex should not be embedded — use a named field (e.g. mu sync.Mutex) to avoid exposing Lock/Unlock on the outer type",
+			})
+		}
+		return true
+	})
+	return violations
+}
+
+// isMutexType reports whether expr is sync.Mutex, sync.RWMutex, *sync.Mutex, or *sync.RWMutex.
+func isMutexType(expr ast.Expr) bool {
+	switch t := expr.(type) {
+	case *ast.SelectorExpr:
+		return isSyncMutexSel(t)
+	case *ast.StarExpr:
+		sel, ok := t.X.(*ast.SelectorExpr)
+		return ok && isSyncMutexSel(sel)
+	}
+	return false
+}
+
+func isSyncMutexSel(sel *ast.SelectorExpr) bool {
+	pkg, ok := sel.X.(*ast.Ident)
+	if !ok || pkg.Name != "sync" {
+		return false
+	}
+	return sel.Sel.Name == "Mutex" || sel.Sel.Name == "RWMutex"
+}
+
+// ruleChannelSizeNotOneOrZero flags make(chan T, N) calls where N is a literal integer > 1.
+//
+// Buffered channels with sizes > 1 often hide synchronisation bugs. Size 0 (unbuffered)
+// and size 1 (single-slot handoff) are accepted idioms. Non-literal sizes are skipped
+// because the value cannot be determined statically.
+// Suppression: add any comment on the same line.
+func ruleChannelSizeNotOneOrZero(fset *token.FileSet, _ []byte, f *ast.File, absFile string) []Violation {
+	commentLines := make(map[int]bool)
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			commentLines[fset.Position(c.Slash).Line] = true
+		}
+	}
+
+	var violations []Violation
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		// Fun must be the builtin "make".
+		fun, ok := call.Fun.(*ast.Ident)
+		if !ok || fun.Name != "make" {
+			return true
+		}
+		// First arg must be a channel type.
+		if len(call.Args) < 2 {
+			return true
+		}
+		if _, isChan := call.Args[0].(*ast.ChanType); !isChan {
+			return true
+		}
+		// Second arg must be a literal integer.
+		lit, ok := call.Args[1].(*ast.BasicLit)
+		if !ok || lit.Kind != token.INT {
+			return true
+		}
+		v, err := strconv.Atoi(lit.Value)
+		if err != nil || v <= 1 {
+			return true
+		}
+		line := fset.Position(call.Pos()).Line
+		if commentLines[line] {
+			return true
+		}
+		violations = append(violations, Violation{
+			File:    absFile,
+			Line:    line,
+			Rule:    "channel_size_not_one_or_zero",
+			Message: fmt.Sprintf("channel buffer size %d is greater than 1 — prefer 0 (unbuffered) or 1; larger buffers often hide synchronisation bugs", v),
 		})
 		return true
 	})
