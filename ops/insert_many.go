@@ -31,6 +31,9 @@ func HandleASTInsertMany(args ASTInsertManyArgs) (json.RawMessage, error) {
 	if isReadonly(args.File) {
 		return errResult(fmt.Sprintf("file is readonly: %s", args.File))
 	}
+	if len(args.Ops) == 0 {
+		return okResult(map[string]interface{}{"changed": false, "diff": ""})
+	}
 
 	type parsedOp struct {
 		steps    []selector.PathStep

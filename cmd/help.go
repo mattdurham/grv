@@ -119,6 +119,17 @@ var ToolRegistry = []ToolInfo{
 		Notes: "All operations are applied to the same in-memory AST and written atomically. Later ops see the AST state produced by earlier ops.",
 	},
 	{
+		Name: "ast_patch",
+		Desc: "Mutate named fields on an AST node without replacing the whole node",
+		Args: []ArgInfo{
+			{Name: "file", Type: "string", Required: true, Desc: "Path to Go source file"},
+			{Name: "path", Type: "[]step", Required: true, Desc: "Selector path to the node to patch"},
+			{Name: "ops", Type: "[]op", Required: true, Desc: "List of {op, field, value?, index?} patch operations"},
+			{Name: "dry_run", Type: "bool", Required: false, Desc: "Return diff without writing"},
+		},
+		Notes: "op values: set (replace field), append/prepend (add to array field), insert (add at index), delete (remove field or array element). All ops are applied to the same in-memory node map before writing.",
+	},
+	{
 		Name: "ast_delete",
 		Desc: "Delete an AST node from a list container",
 		Args: []ArgInfo{

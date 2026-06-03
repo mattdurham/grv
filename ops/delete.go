@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 
 	"github.com/mattdurham/grv/editor"
 	"github.com/mattdurham/grv/selector"
@@ -29,6 +30,7 @@ func HandleASTDelete(args ASTDeleteArgs) (json.RawMessage, error) {
 		return errResult(fmt.Sprintf("parse path: %v", err))
 	}
 
+	original, _ := os.ReadFile(args.File)
 	result, err := editor.Edit(args.File, args.DryRun, func(f *ast.File, _ *token.FileSet) error {
 		_, parentCtx, navErr := selector.Navigate(f, steps)
 		if navErr != nil {
@@ -36,6 +38,11 @@ func HandleASTDelete(args ASTDeleteArgs) (json.RawMessage, error) {
 		}
 		return deleteFromList(parentCtx)
 	})
+	if err == nil && !args.DryRun && result.Changed {
+		if err2 := enforcePostWrite(args.File, original, DefaultChecksConfig.Enforce); err2 != nil {
+			err = err2
+		}
+	}
 	if err != nil {
 		if ne, ok := err.(*selector.NavigateError); ok {
 			return navErrResult(ne)
