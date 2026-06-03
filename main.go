@@ -44,6 +44,12 @@ func main() {
 			filter = os.Args[2]
 		}
 		cmd.PrintHelp(filter)
+	case "example":
+		filter := ""
+		if len(os.Args) > 2 {
+			filter = os.Args[2]
+		}
+		cmd.PrintExamples(filter)
 	case "grammar":
 		filter := ""
 		if len(os.Args) > 2 {

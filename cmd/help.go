@@ -14,12 +14,19 @@ type ArgInfo struct {
 	Desc     string
 }
 
+// ExampleInfo is a single usage example for a tool.
+type ExampleInfo struct {
+	Desc    string // one-line description of what the example does
+	Command string // the grv command to run
+}
+
 // ToolInfo describes one grv tool.
 type ToolInfo struct {
-	Name  string
-	Desc  string
-	Args  []ArgInfo
-	Notes string
+	Name     string
+	Desc     string
+	Args     []ArgInfo
+	Notes    string
+	Examples []ExampleInfo
 }
 
 // ToolRegistry lists all grv tools.
