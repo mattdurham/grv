@@ -27,7 +27,9 @@ func SetDefaultChecksConfig(c hooks.ChecksConfig) {
 			continue
 		}
 		if _, ok := builtinRules[name]; !ok {
-			fmt.Fprintf(os.Stderr, "grv: unknown check rule %q (known: %s)\n", name, knownRuleNames())
+			if _, ok2 := typeAwareRules[name]; !ok2 {
+				fmt.Fprintf(os.Stderr, "grv: unknown check rule %q (known: %s)\n", name, knownRuleNames())
+			}
 		}
 	}
 	DefaultChecksConfig = c
@@ -93,7 +95,10 @@ func checkFile(absFile string, enforce []string) ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runChecks(fset, src, f, absFile, enforce), nil
+	out := runChecks(fset, src, f, absFile, enforce)
+	// Run type-aware rules if any are active; degrade gracefully on failure.
+	out = append(out, runTypeAwareChecks(absFile, enforce)...)
+	return out, nil
 }
 
 // enforcePostWrite runs checks on absFile after a successful write.
@@ -161,8 +166,11 @@ func resolveRules(enforce []string) []ruleFunc {
 }
 
 func knownRuleNames() string {
-	names := make([]string, 0, len(builtinRules))
+	names := make([]string, 0, len(builtinRules)+len(typeAwareRules))
 	for n := range builtinRules {
+		names = append(names, n)
+	}
+	for n := range typeAwareRules {
 		names = append(names, n)
 	}
 	return strings.Join(names, ", ")
