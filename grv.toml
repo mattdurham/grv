@@ -20,3 +20,6 @@ cache     = true
 # cache = true is superseded at runtime by immutable = true, but harmless to leave set.
 immutable = true
 timeout   = "10s"
+
+[checks]
+enforce = ["all"]

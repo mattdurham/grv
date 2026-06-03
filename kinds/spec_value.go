@@ -33,7 +33,9 @@ func (n *ValueSpec) ToAST() (ast.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	result.Values = values
+	if len(values) > 0 {
+		result.Values = values
+	}
 	return result, nil
 }
 
@@ -50,13 +52,15 @@ func (n *ValueSpec) FromAST(node ast.Node) error {
 			return err
 		}
 	}
-	n.Values = make([]json.RawMessage, 0, len(s.Values))
-	for _, val := range s.Values {
-		m, err := MarshalExpr(val)
-		if err != nil {
-			return err
+	if len(s.Values) > 0 {
+		n.Values = make([]json.RawMessage, 0, len(s.Values))
+		for _, val := range s.Values {
+			m, err := MarshalExpr(val)
+			if err != nil {
+				return err
+			}
+			n.Values = append(n.Values, m)
 		}
-		n.Values = append(n.Values, m)
 	}
 	return nil
 }
