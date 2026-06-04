@@ -29,16 +29,16 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_query": {
 		{
-			Desc:    "Read a function body",
-			Command: `grv ast_query --namespace 'hooks#RunFile' --path '[{"kind":"FuncDecl","name":"RunFile"}]'`,
+			Desc:    "Read a function — path in tree notation",
+			Command: `grv ast_query --namespace 'hooks#RunFile' --path 'FuncDecl name=RunFile'`,
 		},
 		{
 			Desc:    "Read a struct type",
-			Command: `grv ast_query --namespace 'hooks#HookConfig' --path '[{"kind":"TypeSpec","name":"HookConfig"}]'`,
+			Command: `grv ast_query --namespace 'hooks#HookConfig' --path 'TypeSpec name=HookConfig'`,
 		},
 		{
-			Desc:    "Read a nested field inside a struct",
-			Command: `grv ast_query --file hooks/config.go --path '[{"kind":"TypeSpec","name":"HookConfig"},{"kind":"StructType"},{"kind":"FieldList"},{"kind":"Field","name":"Name"}]'`,
+			Desc:    "Read a nested field (slash-separated path)",
+			Command: `grv ast_query --file hooks/config.go --path 'TypeSpec name=HookConfig / StructType / FieldList / Field name=Name'`,
 		},
 		{
 			Desc:    "Get file-level metadata (empty path)",
@@ -53,26 +53,34 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_meta": {
 		{
-			Desc:    "Get line range and cyclomatic complexity of a function",
-			Command: `grv ast_meta --file ops/checks.go --path '[{"kind":"FuncDecl","name":"ruleErrorHandled"}]'`,
+			Desc:    "Get line range, complexity, git_churn and lth context for a function",
+			Command: `grv ast_meta --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled'`,
 		},
 		{
 			Desc:    "Get file-level stats (func count, import count, line count)",
 			Command: `grv ast_meta --file ops/checks.go --path '[]'`,
 		},
 		{
-			Desc:    "Pull only lth memory for a node (hooks allowlist)",
-			Command: `grv ast_meta --file ops/checks.go --path '[{"kind":"FuncDecl","name":"ruleErrorHandled"}]' --hooks '["lth"]'`,
+			Desc:    "Pull only lth memory for a node",
+			Command: `grv ast_meta --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled' --hooks '["lth"]'`,
 		},
 	},
 	"ast_insert": {
 		{
-			Desc:    "Append a new function to a file (dry run first)",
-			Command: `grv ast_insert --file ops/checks.go --path '[{"kind":"FuncDecl","name":"ruleErrorHandled"}]' --index -1 --node '{"kind":"FuncDecl","name":"myRule","type":{"kind":"FuncType","params":{"kind":"FieldList"}},"body":{"kind":"BlockStmt","list":[]}}' --dry_run true`,
+			Desc:    "Append a new function to a file using tree notation (dry run first)",
+			Command: `grv ast_insert --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled' --index -1 --node 'FuncDecl name=myRule
+  type FuncType
+    params FieldList
+  body BlockStmt' --dry_run true`,
 		},
 		{
 			Desc:    "Insert a statement at the top of a function body",
-			Command: `grv ast_insert --file ops/checks.go --path '[{"kind":"FuncDecl","name":"runChecks"},{"kind":"BlockStmt"}]' --index 0 --node '{"kind":"ExprStmt","x":{"kind":"CallExpr","fun":{"kind":"SelectorExpr","x":{"kind":"Ident","name":"fmt"},"sel":"Println"},"args":[{"kind":"BasicLit","tok":"STRING","value":"\"debug\""}]}}' --dry_run true`,
+			Command: `grv ast_insert --file ops/checks.go --path 'FuncDecl name=runChecks / BlockStmt' --index 0 --node 'ExprStmt
+  x CallExpr ellipsis=false
+    fun SelectorExpr sel=Println
+      x Ident name=fmt
+    args[]
+      BasicLit tok=STRING value="\"debug\""' --dry_run true`,
 		},
 	},
 	"ast_insert_many": {
@@ -83,8 +91,13 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_replace": {
 		{
-			Desc:    "Replace a function body (dry run first)",
-			Command: `grv ast_replace --file ops/checks.go --path '[{"kind":"FuncDecl","name":"knownRuleNames"}]' --node '{"kind":"FuncDecl","name":"knownRuleNames","body":{"kind":"BlockStmt","list":[{"kind":"ReturnStmt","results":[{"kind":"BasicLit","tok":"STRING","value":"\"error_handled\""}]}]}}' --dry_run true`,
+			Desc:    "Replace a function body using tree notation (dry run first)",
+			Command: `grv ast_replace --file ops/checks.go --path 'FuncDecl name=knownRuleNames' --node 'FuncDecl name=knownRuleNames
+  body BlockStmt
+    list[]
+      ReturnStmt
+        results[]
+          BasicLit tok=STRING value="\"error_handled\""' --dry_run true`,
 		},
 	},
 	"ast_replace_many": {
@@ -96,21 +109,21 @@ var exampleRegistry = map[string][]ExampleInfo{
 	"ast_patch": {
 		{
 			Desc:    "Rename a function by patching only its name field (dry run first)",
-			Command: `grv ast_patch --file ops/checks.go --path '[{"kind":"FuncDecl","name":"ruleErrorHandled"}]' --ops '[{"op":"set","field":"name","value":"\"ruleErrorDiscarded\""}]' --dry_run true`,
+			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled' --ops '[{"op":"set","field":"name","value":"\"ruleErrorDiscarded\""}]' --dry_run true`,
 		},
 		{
-			Desc:    "Append a return value to a ReturnStmt",
-			Command: `grv ast_patch --file ops/checks.go --path '[{"kind":"FuncDecl","name":"knownRuleNames"},{"kind":"BlockStmt"},{"kind":"ReturnStmt"}]' --ops '[{"op":"append","field":"results","value":{"kind":"BasicLit","tok":"STRING","value":"\"new_rule\""}}]' --dry_run true`,
+			Desc:    "Append a rule name to the return statement",
+			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=knownRuleNames / BlockStmt / ReturnStmt' --ops '[{"op":"append","field":"results","value":{"kind":"BasicLit","tok":"STRING","value":"\"new_rule\""}}]' --dry_run true`,
 		},
 		{
-			Desc:    "Remove a field from a node (e.g. clear a function receiver)",
-			Command: `grv ast_patch --file ops/checks.go --path '[{"kind":"FuncDecl","name":"runChecks"}]' --ops '[{"op":"delete","field":"recv"}]' --dry_run true`,
+			Desc:    "Remove a field from a node",
+			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=runChecks' --ops '[{"op":"delete","field":"recv"}]' --dry_run true`,
 		},
 	},
 	"ast_delete": {
 		{
 			Desc:    "Delete a function from a file",
-			Command: `grv ast_delete --file ops/checks.go --path '[{"kind":"FuncDecl","name":"knownRuleNames"}]' --dry_run true`,
+			Command: `grv ast_delete --file ops/checks.go --path 'FuncDecl name=knownRuleNames' --dry_run true`,
 		},
 	},
 	"ast_delete_many": {
