@@ -240,6 +240,13 @@ func parseToolFlags(args []string) json.RawMessage {
 				continue
 			}
 		}
+		// --path / --paths in tree notation: "FuncDecl name=foo / BlockStmt" → JSON step array.
+		if (key == "path" || key == "paths") && !json.Valid([]byte(val)) {
+			if raw := parseTreePath(val); raw != nil {
+				m[key] = raw
+				continue
+			}
+		}
 		// Otherwise treat as string.
 		m[key] = encodeValue(val)
 
@@ -248,6 +255,60 @@ func parseToolFlags(args []string) json.RawMessage {
 	result, _ := json.Marshal(m) // map of RawMessage: Marshal never fails
 	return result
 }
+// parseTreePath converts a tree-notation path like "FuncDecl name=foo / BlockStmt"
+// into a JSON step array: [{"kind":"FuncDecl","name":"foo"},{"kind":"BlockStmt"}].
+// Returns nil if the input doesn't look like tree-notation steps.
+func parseTreePath(val string) json.RawMessage {
+	// Split on " / " (slash separator) or newlines.
+	val = strings.TrimSpace(val)
+	var parts []string
+	if strings.Contains(val, " / ") {
+		parts = strings.Split(val, " / ")
+	} else if strings.Contains(val, "\n") {
+		parts = strings.Split(val, "\n")
+	} else {
+		parts = []string{val}
+	}
+
+	steps := make([]map[string]interface{}, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Each part is a tree node header: "KindName attr=val ..."
+		// Must start with uppercase to be a valid kind name.
+		if len(p) == 0 || p[0] < 'A' || p[0] > 'Z' {
+			return nil
+		}
+		step := map[string]interface{}{}
+		tokens := strings.Fields(p)
+		step["kind"] = tokens[0]
+		for _, kv := range tokens[1:] {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				continue
+			}
+			// Parse the value: try JSON first (numbers, bools, quoted strings), else keep as string.
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(v), &parsed); err == nil {
+				step[k] = parsed
+			} else {
+				step[k] = v
+			}
+		}
+		steps = append(steps, step)
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(steps)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(b)
+}
+
 func extractFormat(args []string) (string, []string) {
 	format := "tree"
 	out := make([]string, 0, len(args))

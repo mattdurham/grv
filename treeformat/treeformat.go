@@ -58,11 +58,8 @@ func writeValue(buf *bytes.Buffer, v interface{}, depth int) {
 	case map[string]interface{}:
 		kind, hasKind := val["kind"].(string)
 		if !hasKind {
-			// Non-node object: emit as raw JSON.
-			b, _ := json.Marshal(val)
-			buf.WriteString(prefix)
-			buf.Write(b)
-			buf.WriteByte('\n')
+			// Plain object (no kind discriminator): render as key=val lines.
+			writePlainObject(buf, val, depth)
 			return
 		}
 		fmt.Fprintf(buf, "%s%s\n", prefix, buildHeader(kind, val))
@@ -76,6 +73,39 @@ func writeValue(buf *bytes.Buffer, v interface{}, depth int) {
 		buf.WriteString(prefix)
 		buf.Write(b)
 		buf.WriteByte('\n')
+	}
+}
+
+// writePlainObject renders a map without a "kind" field as key=val lines.
+// Scalar values are inline; objects and arrays become indented child blocks.
+func writePlainObject(buf *bytes.Buffer, obj map[string]interface{}, depth int) {
+	prefix := strings.Repeat("  ", depth)
+	for _, k := range sortedKeys(obj) {
+		v := obj[k]
+		if isScalar(v) {
+			fmt.Fprintf(buf, "%s%s=%s\n", prefix, k, formatScalar(v))
+			continue
+		}
+		switch cv := v.(type) {
+		case map[string]interface{}:
+			fmt.Fprintf(buf, "%s%s\n", prefix, k)
+			writeValue(buf, cv, depth+1)
+		case []interface{}:
+			if len(cv) == 0 {
+				fmt.Fprintf(buf, "%s%s=[]\n", prefix, k)
+			} else if allScalars(cv) {
+				parts := make([]string, len(cv))
+				for i, item := range cv {
+					parts[i] = formatScalar(item)
+				}
+				fmt.Fprintf(buf, "%s%s=[%s]\n", prefix, k, strings.Join(parts, ","))
+			} else {
+				fmt.Fprintf(buf, "%s%s[]\n", prefix, k)
+				for _, item := range cv {
+					writeValue(buf, item, depth+1)
+				}
+			}
+		}
 	}
 }
 
