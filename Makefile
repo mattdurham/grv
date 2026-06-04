@@ -1,11 +1,12 @@
-SKILL_SRC := $(HOME)/source/goast/lth-grv-SKILL.md
+SKILL_SRC := skills/lth-grv.md
 SKILL_DIR := $(HOME)/.claude/skills/lth-grv
 
-.PHONY: install install-skill build test test-race test-cover clean
+.PHONY: install install-skill install-all build test test-race test-cover clean
 
-install: build
-	@mkdir -p $(HOME)/.local/bin
-	install -m 755 grv $(HOME)/.local/bin/grv
+# Install the grv binary to ~/go/bin via go install
+install:
+	go install .
+	@echo "Installed: $$(which grv)"
 
 # Install the lth-grv Claude Code skill
 install-skill:
