@@ -232,6 +232,14 @@ func HandleASTQuery(args ASTQueryArgs) (json.RawMessage, error) {
 		return errResult(fmt.Sprintf("marshal node: %v", err))
 	}
 
+	// Inject line/end_line into the node JSON so agents can orient themselves
+	// in the tree without a separate ast_meta call.
+	pos := fset.Position(node.Pos())
+	end := fset.Position(node.End())
+	if pos.Line > 0 {
+		nodeJSON = injectLineFields(nodeJSON, pos.Line, end.Line)
+	}
+
 	resp := ASTQueryResponse{
 		Node:     nodeJSON,
 		Readonly: isReadonly(args.File),
@@ -332,6 +340,25 @@ func HandleASTMeta(args ASTMetaArgs) (json.RawMessage, error) {
 	}
 	m = mergeHookMeta(m, args.File, args.Hooks)
 	return okResult(m)
+}
+
+// injectLineFields adds "line" and "end_line" scalar fields to the top-level
+// JSON object. These appear as line=N / end_line=N in tree notation, letting
+// agents orient queried nodes in the source file without a separate ast_meta call.
+func injectLineFields(raw json.RawMessage, line, endLine int) json.RawMessage {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	lb, _ := json.Marshal(line)
+	eb, _ := json.Marshal(endLine)
+	m["line"] = lb
+	m["end_line"] = eb
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 func handleASTListDir(dir string) (json.RawMessage, error) {
