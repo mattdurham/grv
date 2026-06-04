@@ -51,6 +51,12 @@ func main() {
 			filter = os.Args[2]
 		}
 		cmd.PrintExamples(filter)
+	case "guide":
+		topic := ""
+		if len(os.Args) > 2 {
+			topic = os.Args[2]
+		}
+		cmd.PrintGuide(topic)
 	case "grammar":
 		filter := ""
 		if len(os.Args) > 2 {
