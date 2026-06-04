@@ -2,12 +2,20 @@
 
 grv is a Go AST manipulation tool designed for AI agents and developers who need to read and write Go code structurally — without string patching, line offsets, or raw source text.
 
-All code is represented as **tree notation**: compact, indented node trees that are easy to read, easy to generate, and unambiguous to parse. JSON is also accepted for compatibility.
+All code is represented as **tree notation**: compact, indented node trees that are easy to read, easy to generate, and unambiguous to parse.
 
 ## Installation
 
 ```sh
 go install github.com/mattdurham/grv@latest
+```
+
+Or from source:
+
+```sh
+git clone https://github.com/mattdurham/grv
+cd grv
+make install-all   # installs binary + lth-grv Claude Code skill
 ```
 
 ## Quick Start
@@ -16,7 +24,7 @@ go install github.com/mattdurham/grv@latest
 # Start the daemon (auto-started on first tool call)
 grv start
 
-# Read a function — path in tree notation
+# Read a function
 grv ast_query --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled'
 
 # Read metadata: line range, complexity, git churn, lth memories
@@ -31,10 +39,10 @@ grv ast_check --dir ops/
 # Patch a field without replacing the whole node
 grv ast_patch --file ops/checks.go \
   --path 'FuncDecl name=ruleErrorHandled' \
-  --ops '[{"op":"set","field":"name","value":"\"ruleErrorDiscarded\""}]' \
+  --ops 'set name "ruleErrorDiscarded"' \
   --dry_run true
 
-# Insert a new statement (tree notation for --node)
+# Insert a new statement
 grv ast_insert --file ops/checks.go \
   --path 'FuncDecl name=runChecks / BlockStmt' \
   --index 0 \
@@ -47,9 +55,9 @@ grv ast_insert --file ops/checks.go \
   --dry_run true
 ```
 
-## Output Format
+## Tree Notation
 
-grv outputs **tree notation** by default. Use `--format json` for raw JSON.
+grv uses tree notation for all input and output. Every node is one line with scalar attributes inline; children are indented 2 spaces:
 
 ```
 FuncDecl name=ruleErrorHandled line=201 end_line=246
@@ -78,7 +86,7 @@ FuncDecl name=ruleErrorHandled line=201 end_line=246
       ...
 ```
 
-Metadata (`grv ast_meta`) renders as key=val:
+Metadata renders as key=val:
 
 ```
 line=201
@@ -105,7 +113,7 @@ grv guide notation     # how to read and write tree notation
 grv guide fields       # common field names: x, fun, sel, tok, op ...
 grv guide nodes        # node kinds with Go ↔ tree examples
 grv guide meta         # metadata fields reference
-grv grammar            # JSON schemas for all node kinds
+grv grammar            # schemas for all node kinds
 ```
 
 ## Tools
@@ -149,7 +157,7 @@ All write tools:
 
 ### Paths
 
-Paths identify nodes within a file. Tree notation (recommended):
+Paths identify nodes within a file using slash-separated tree steps:
 
 ```sh
 --path 'FuncDecl name=foo'
@@ -157,17 +165,35 @@ Paths identify nodes within a file. Tree notation (recommended):
 --path 'TypeSpec name=Violation / StructType / FieldList / Field name=Line'
 ```
 
-JSON is also accepted:
+### Ops (ast_patch)
+
 ```sh
---path '[{"kind":"FuncDecl","name":"foo"},{"kind":"BlockStmt"}]'
+--ops 'set name "newName"
+delete recv
+append list
+  Ident name=x'
 ```
+
+### Ops (batch tools)
+
+```sh
+--ops 'path FuncDecl name=foo
+node
+  FuncDecl name=bar
+---
+path TypeSpec name=Old
+node
+  TypeSpec name=New'
+```
+
+See `grv guide notation` for the full reference.
 
 ## Configuration (`grv.yaml`)
 
 ```yaml
 hooks:
   - name: lth
-    command: ["~/bin/lth", "--json", "search", "{namespace}", "--brief"]
+    command: ["~/bin/lth", "search", "{namespace}", "--brief"]
     scope: file
     cache: true
     immutable: true
