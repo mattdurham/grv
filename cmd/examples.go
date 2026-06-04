@@ -47,8 +47,10 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_query_many": {
 		{
-			Desc:    "Read two functions in one call",
-			Command: `grv ast_query_many --file ops/checks.go --paths '[[{"kind":"FuncDecl","name":"ruleErrorHandled"}],[{"kind":"FuncDecl","name":"runChecks"}]]'`,
+			Desc: "Read two functions in one call",
+			Command: `grv ast_query_many --file ops/checks.go --paths 'FuncDecl name=ruleErrorHandled
+---
+FuncDecl name=runChecks'`,
 		},
 	},
 	"ast_meta": {
@@ -85,8 +87,18 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_insert_many": {
 		{
-			Desc:    "Add two struct fields in one atomic write",
-			Command: `grv ast_insert_many --file ops/checks.go --ops '[{"path":[{"kind":"TypeSpec","name":"Violation"},{"kind":"StructType"},{"kind":"FieldList"}],"index":-1,"node":{"kind":"Field","names":["Source"],"type":{"kind":"Ident","name":"string"}}},{"path":[{"kind":"TypeSpec","name":"Violation"},{"kind":"StructType"},{"kind":"FieldList"}],"index":-1,"node":{"kind":"Field","names":["Severity"],"type":{"kind":"Ident","name":"int"}}}]' --dry_run true`,
+			Desc: "Add two struct fields in one atomic write",
+			Command: `grv ast_insert_many --file ops/checks.go --ops 'path TypeSpec name=Violation / StructType / FieldList
+index -1
+node
+  Field names=[Source]
+    type Ident name=string
+---
+path TypeSpec name=Violation / StructType / FieldList
+index -1
+node
+  Field names=[Severity]
+    type Ident name=int' --dry_run true`,
 		},
 	},
 	"ast_replace": {
@@ -102,22 +114,36 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_replace_many": {
 		{
-			Desc:    "Rename two identifiers in one atomic write",
-			Command: `grv ast_replace_many --file ops/checks.go --ops '[{"path":[{"kind":"FuncDecl","name":"ruleErrorHandled"},{"kind":"Ident","name":"ruleErrorHandled"}],"node":{"kind":"Ident","name":"ruleErrorDiscarded"}},{"path":[{"kind":"FuncDecl","name":"ruleErrorDiscarded"}],"node":{"kind":"FuncDecl","name":"ruleErrorDiscarded"}}]' --dry_run true`,
+			Desc: "Replace two nodes in one atomic write",
+			Command: `grv ast_replace_many --file ops/checks.go --ops 'path FuncDecl name=ruleErrorHandled / Ident name=ruleErrorHandled
+node
+  Ident name=ruleErrorDiscarded
+---
+path FuncDecl name=ruleErrorHandled
+node
+  FuncDecl name=ruleErrorDiscarded' --dry_run true`,
 		},
 	},
 	"ast_patch": {
 		{
-			Desc:    "Rename a function by patching only its name field (dry run first)",
-			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled' --ops '[{"op":"set","field":"name","value":"\"ruleErrorDiscarded\""}]' --dry_run true`,
+			Desc: "Rename a function (patch only the name field)",
+			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=ruleErrorHandled' --ops 'set name "ruleErrorDiscarded"' --dry_run true`,
 		},
 		{
-			Desc:    "Append a rule name to the return statement",
-			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=knownRuleNames / BlockStmt / ReturnStmt' --ops '[{"op":"append","field":"results","value":{"kind":"BasicLit","tok":"STRING","value":"\"new_rule\""}}]' --dry_run true`,
+			Desc: "Append a statement to a function body",
+			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=runChecks' --ops 'append list
+  ReturnStmt
+    results[]
+      Ident name=out' --dry_run true`,
 		},
 		{
-			Desc:    "Remove a field from a node",
-			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=runChecks' --ops '[{"op":"delete","field":"recv"}]' --dry_run true`,
+			Desc: "Remove a field and insert a statement at position 0",
+			Command: `grv ast_patch --file ops/checks.go --path 'FuncDecl name=runChecks' --ops 'delete recv
+insert list 0
+  ExprStmt
+    x CallExpr ellipsis=false
+      fun Ident name=validate
+      args=[]' --dry_run true`,
 		},
 	},
 	"ast_delete": {
@@ -128,8 +154,10 @@ var exampleRegistry = map[string][]ExampleInfo{
 	},
 	"ast_delete_many": {
 		{
-			Desc:    "Delete two functions in one atomic write (highest index first)",
-			Command: `grv ast_delete_many --file ops/checks.go --ops '[{"path":[{"kind":"FuncDecl","name":"ruleChannelSizeNotOneOrZero"}]},{"path":[{"kind":"FuncDecl","name":"ruleMapWithoutSizeHint"}]}]' --dry_run true`,
+			Desc: "Delete two functions in one atomic write (highest index first)",
+			Command: `grv ast_delete_many --file ops/checks.go --ops 'path FuncDecl name=ruleChannelSizeNotOneOrZero
+---
+path FuncDecl name=ruleMapWithoutSizeHint' --dry_run true`,
 		},
 	},
 	"ast_rename": {

@@ -67,19 +67,51 @@ SCALARS:
   exported=true    boolean
   init=null        null (absent/nil field)
 
-WRITING (--node and --path args):
+WRITING — --node, --path, --paths, --ops, --pattern all use tree notation:
+
   --path 'FuncDecl name=foo / BlockStmt / AssignStmt'   slash-separated path steps
-  --node 'Ident name=x'                                  simple node
+  --node 'Ident name=x'                                  simple node (single line)
   --node 'AssignStmt tok=":="                            multiline node
     lhs[]
       Ident name=x
     rhs[]
       BasicLit tok=INT value=42'
 
-  JSON is also accepted: --node '{"kind":"Ident","name":"x"}'
-  --format json   prints raw JSON instead of tree
+  --paths — multiple paths for ast_query_many, separated by ---:
+    'FuncDecl name=foo
+    ---
+    FuncDecl name=bar / BlockStmt'
+
+  --ops for ast_patch — one op per block:
+    'set name "newName"
+    delete recv
+    append list
+      Ident name=x
+    insert list 0
+      Ident name=y
+    prepend list
+      Ident name=z
+    delete list 2'
+
+    Valid ops: set <field> <value>, delete <field> [index],
+               append/prepend <field> (node on next indented line),
+               insert <field> <index> (node on next indented line)
+
+  --ops for ast_replace_many / ast_insert_many / ast_delete_many:
+    'path FuncDecl name=foo
+    node
+      FuncDecl name=bar
+    ---
+    path TypeSpec name=Old
+    index -1
+    node
+      TypeSpec name=New'
+
+    Keys: path <tree-path>, node (tree node on next indented line),
+          index <int> (insert_many only)
 
 `)
+
 }
 
 func printFieldsGuide() {
