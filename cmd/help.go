@@ -239,11 +239,13 @@ var ToolRegistry = []ToolInfo{
 	},
 	{
 		Name: "ast_directory",
-		Desc: "Inventory all Go and non-Go files in a directory",
+		Desc: "Inventory all Go and non-Go files in a directory tree",
 		Args: []ArgInfo{
 			{Name: "namespace", Type: "string", Required: false, Desc: "Package name (e.g. 'hooks' or '.'); routed to dir automatically"},
 			{Name: "dir", Type: "string", Required: false, Desc: "Directory path (alternative to namespace)"},
+			{Name: "recursive", Type: "bool", Required: false, Desc: "Walk all subdirs (default true; pass false for top-level only)"},
 		},
+		Notes: "Recursive by default. Returns go_files (with symbols), non_go_files (with size), and subdirs when recursive=false.",
 	},
 	{
 		Name: "gomod_read",
@@ -292,14 +294,16 @@ var ToolRegistry = []ToolInfo{
 		Name: "file_read",
 		Desc: "Read any non-Go file",
 		Args: []ArgInfo{
-			{Name: "file", Type: "string", Required: true, Desc: "Path to file"},
+			{Name: "file", Type: "string", Required: true, Desc: "Path to file (absolute, or relative when namespace is provided)"},
+			{Name: "namespace", Type: "string", Required: false, Desc: "Package namespace to resolve file relative to (e.g. --namespace hooks --file NOTES.md)"},
 		},
 	},
 	{
 		Name: "file_write",
 		Desc: "Write content to any non-Go file",
 		Args: []ArgInfo{
-			{Name: "file", Type: "string", Required: true, Desc: "Path to file"},
+			{Name: "file", Type: "string", Required: true, Desc: "Path to file (absolute, or relative when namespace is provided)"},
+			{Name: "namespace", Type: "string", Required: false, Desc: "Package namespace to resolve file relative to"},
 			{Name: "content", Type: "string", Required: true, Desc: "New file content"},
 			{Name: "dry_run", Type: "bool", Required: false, Desc: "Return diff without writing"},
 		},

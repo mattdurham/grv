@@ -222,17 +222,27 @@ func TestResolveNamespace_NoNamespaceKey(t *testing.T) {
 	}
 }
 
-func TestResolveNamespace_SkipTool(t *testing.T) {
+func TestResolveNamespace_FileReadWithNamespace(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "hooks"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	srv := daemon.NewTestServer(dir)
-	raw := marshalArg(t, map[string]string{"namespace": "hooks"})
+	raw := marshalArg(t, map[string]string{"namespace": "hooks", "file": "NOTES.md"})
 	got, err := srv.ResolveNamespace("file_read", raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should be returned unchanged
-	if string(got) != string(raw) {
-		t.Fatalf("expected unchanged args, got %s", got)
+	var m map[string]string
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatal(err)
+	}
+	wantFile := filepath.Join(dir, "hooks", "NOTES.md")
+	if m["file"] != wantFile {
+		t.Errorf("file: want %q, got %q", wantFile, m["file"])
+	}
+	if _, ok := m["namespace"]; ok {
+		t.Error("namespace key should be removed after routing")
 	}
 }
 

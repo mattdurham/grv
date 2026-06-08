@@ -248,12 +248,28 @@ path FuncDecl name=ruleMapWithoutSizeHint' --dry_run true`,
 	},
 	"ast_directory": {
 		{
-			Desc:    "Inventory all files and symbols in the hooks package",
-			Command: `grv ast_directory --dir hooks/`,
+			Desc:    "Full recursive inventory of a package (Go + non-Go files)",
+			Command: `grv ast_directory --namespace hooks`,
 		},
 		{
-			Desc:    "Inventory via namespace (routed automatically)",
-			Command: `grv ast_directory --namespace hooks`,
+			Desc:    "Top-level only (no recursion)",
+			Command: `grv ast_directory --dir hooks/ --recursive false`,
+		},
+	},
+	"file_read": {
+		{
+			Desc:    "Read a non-Go file by namespace + relative path",
+			Command: `grv file_read --namespace hooks --file NOTES.md`,
+		},
+		{
+			Desc:    "Read a file by absolute path",
+			Command: `grv file_read --file /path/to/grv.yaml`,
+		},
+	},
+	"file_write": {
+		{
+			Desc:    "Write a non-Go file via namespace (dry run first)",
+			Command: `grv file_write --namespace hooks --file NOTES.md --content 'new content' --dry_run true`,
 		},
 	},
 	"gomod_read": {
@@ -272,18 +288,6 @@ path FuncDecl name=ruleMapWithoutSizeHint' --dry_run true`,
 		{
 			Desc:    "Remove a dependency",
 			Command: `grv gomod_drop_require --file go.mod --path gopkg.in/yaml.v3`,
-		},
-	},
-	"file_read": {
-		{
-			Desc:    "Read a YAML config file",
-			Command: `grv file_read --file grv.yaml`,
-		},
-	},
-	"file_write": {
-		{
-			Desc:    "Write a non-Go file (dry run first)",
-			Command: `grv file_write --file grv.yaml --content 'hooks: []' --dry_run true`,
 		},
 	},
 }

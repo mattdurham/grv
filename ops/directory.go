@@ -16,7 +16,7 @@ import (
 // ASTDirectoryArgs is the argument struct for ast_directory.
 type ASTDirectoryArgs struct {
 	Dir       string `json:"dir"`
-	Recursive bool   `json:"recursive,omitempty"` // default false; true = walk all subdirs
+	Recursive *bool  `json:"recursive,omitempty"` // default true; pass false for top-level only
 }
 
 // GoFileEntry describes a parsed Go file in the directory.
@@ -83,7 +83,8 @@ func HandleASTDirectory(args ASTDirectoryArgs) (json.RawMessage, error) {
 		Subdirs:    []string{},
 	}
 
-	if err := walkDir(args.Dir, args.Dir, args.Recursive, &result); err != nil {
+	recursive := args.Recursive == nil || *args.Recursive // default true
+	if err := walkDir(args.Dir, args.Dir, recursive, &result); err != nil {
 		return errResult(fmt.Sprintf("read dir: %v", err))
 	}
 

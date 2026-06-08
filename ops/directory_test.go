@@ -111,7 +111,9 @@ func TestHandleASTDirectory_NonGoFiles(t *testing.T) {
 }
 
 func TestHandleASTDirectory_Subdirs(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
+	// With recursive=false, Subdirs should list immediate subdirectories.
+	f := false
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata", Recursive: &f})
 	if err != nil {
 		t.Fatal(err)
 	}

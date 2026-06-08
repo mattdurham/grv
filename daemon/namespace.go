@@ -23,13 +23,19 @@ var hybridTools = map[string]bool{
 }
 
 var skipTools = map[string]bool{
-	"file_read":          true,
-	"file_write":         true,
 	"gomod_read":         true,
 	"gomod_require":      true,
 	"gomod_drop_require": true,
 	"gomod_replace":      true,
 	"gomod_drop_replace": true,
+}
+
+// fileRelativeTools accept --namespace <pkg> alongside --file <relative-path>.
+// The namespace resolves to a directory; the file path is joined to it.
+// Example: --namespace hooks --file NOTES.md → hooks/NOTES.md
+var fileRelativeTools = map[string]bool{
+	"file_read":  true,
+	"file_write": true,
 }
 
 // ParseNamespace splits a namespace string like "hooks#RunFile" into
@@ -83,6 +89,20 @@ func (s *Server) resolveNamespace(tool string, raw json.RawMessage) (json.RawMes
 	delete(m, "namespace")
 
 	switch {
+	case fileRelativeTools[tool]:
+		// Combine namespace-derived directory with the existing --file value.
+		var relFile string
+		if m["file"] != nil {
+			if err := json.Unmarshal(m["file"], &relFile); err != nil {
+				return nil, fmt.Errorf("file_read/file_write: invalid file arg: %w", err)
+			}
+		}
+		if relFile == "" {
+			return nil, fmt.Errorf("%s with --namespace requires --file <relative-path>, e.g. --namespace hooks --file NOTES.md", tool)
+		}
+		absFile := filepath.Join(absDir, relFile)
+		return injectFile(m, absFile)
+
 	case dirTools[tool]:
 		if declName != "" {
 			return nil, fmt.Errorf("%s does not accept a declaration name; use %s without #%s", tool, pkgRel, declName)
