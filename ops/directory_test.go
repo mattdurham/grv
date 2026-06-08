@@ -16,85 +16,15 @@ func dirText(t *testing.T, result json.RawMessage, err error) string {
 	return string(result)
 }
 
-func TestHandleASTDirectory_Basic(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := dirText(t, result, err)
-	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(resp.GoFiles) == 0 {
-		t.Error("expected Go files in testdata/")
-	}
-}
-
-func TestHandleASTDirectory_GoSymbols(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := dirText(t, result, err)
-	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	// Find simple.go entry
-	var simpleEntry *ops.GoFileEntry
-	for i := range resp.GoFiles {
-		if resp.GoFiles[i].File == "simple.go" {
-			simpleEntry = &resp.GoFiles[i]
-			break
-		}
-	}
-	if simpleEntry == nil {
-		t.Fatal("simple.go not found in directory listing")
-	}
-
-	// Verify Dog struct is present
-	foundDog := false
-	for _, s := range simpleEntry.Structs {
-		if s.Name == "Dog" {
-			foundDog = true
-			break
-		}
-	}
-	if !foundDog {
-		t.Errorf("expected Dog struct in simple.go, structs: %v", simpleEntry.Structs)
-	}
-
-	// Verify Add function is present
-	foundAdd := false
-	for _, f := range simpleEntry.Functions {
-		if f.Name == "Add" {
-			foundAdd = true
-			break
-		}
-	}
-	if !foundAdd {
-		t.Errorf("expected Add function in simple.go, functions: %v", simpleEntry.Functions)
-	}
-
-	// Verify interface is present
-	if len(simpleEntry.Interfaces) == 0 {
-		t.Error("expected at least one interface in simple.go")
-	}
-}
-
 func TestHandleASTDirectory_NonGoFiles(t *testing.T) {
 	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+	if err := json.Unmarshal([]byte(dirText(t, result, err)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-
 	foundMod := false
 	for _, f := range resp.NonGoFiles {
 		if f.File == "test.mod" {
@@ -110,6 +40,23 @@ func TestHandleASTDirectory_NonGoFiles(t *testing.T) {
 	}
 }
 
+func TestHandleASTDirectory_NoGoFiles(t *testing.T) {
+	// ast_directory must never return Go files — those belong to AST tools.
+	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp ops.ASTDirectoryResult
+	if err := json.Unmarshal([]byte(dirText(t, result, err)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, f := range resp.NonGoFiles {
+		if len(f.File) > 3 && f.File[len(f.File)-3:] == ".go" {
+			t.Errorf("ast_directory must not return .go files, got: %s", f.File)
+		}
+	}
+}
+
 func TestHandleASTDirectory_Subdirs(t *testing.T) {
 	// With recursive=false, Subdirs should list immediate subdirectories.
 	f := false
@@ -117,12 +64,10 @@ func TestHandleASTDirectory_Subdirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+	if err := json.Unmarshal([]byte(dirText(t, result, err)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-
 	foundTypesdata := false
 	for _, d := range resp.Subdirs {
 		if d == "typesdata" {
@@ -135,36 +80,18 @@ func TestHandleASTDirectory_Subdirs(t *testing.T) {
 	}
 }
 
-func TestHandleASTDirectory_ReadonlyField(t *testing.T) {
-	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := dirText(t, result, err)
-	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	for _, f := range resp.GoFiles {
-		if f.Readonly {
-			t.Errorf("testdata/%s should not be readonly", f.File)
-		}
-	}
-}
-
 func TestHandleASTDirectory_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := dirText(t, result, err)
 	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+	if err := json.Unmarshal([]byte(dirText(t, result, err)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(resp.GoFiles) != 0 || len(resp.NonGoFiles) != 0 {
-		t.Error("expected empty results for empty dir")
+	if len(resp.NonGoFiles) != 0 {
+		t.Error("expected empty non_go_files for empty dir")
 	}
 }
 
@@ -179,39 +106,5 @@ func TestHandleASTDirectory_EmptyArg(t *testing.T) {
 	_, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: ""})
 	if err == nil {
 		t.Error("expected error for empty dir")
-	}
-}
-
-func TestHandleASTDirectory_GoSymbolsDetailed(t *testing.T) {
-	// Exercises parseGoFile more deeply — methods, globals
-	result, err := ops.HandleASTDirectory(ops.ASTDirectoryArgs{Dir: "../testdata"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := dirText(t, result, err)
-	var resp ops.ASTDirectoryResult
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	for _, f := range resp.GoFiles {
-		if f.File != "simple.go" {
-			continue
-		}
-		// Should have methods (Sound, Greet on *Dog)
-		hasMethod := false
-		for _, fn := range f.Functions {
-			if fn.Recv != "" {
-				hasMethod = true
-				break
-			}
-		}
-		if !hasMethod {
-			t.Error("expected at least one method (with receiver) in simple.go")
-		}
-		// Package name must be set
-		if f.Package == "" {
-			t.Error("expected non-empty package name")
-		}
 	}
 }

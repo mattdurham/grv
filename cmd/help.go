@@ -239,13 +239,13 @@ var ToolRegistry = []ToolInfo{
 	},
 	{
 		Name: "ast_directory",
-		Desc: "Inventory all Go and non-Go files in a directory tree",
+		Desc: "List all non-Go files in a namespace/directory tree",
 		Args: []ArgInfo{
 			{Name: "namespace", Type: "string", Required: false, Desc: "Package name (e.g. 'hooks' or '.'); routed to dir automatically"},
 			{Name: "dir", Type: "string", Required: false, Desc: "Directory path (alternative to namespace)"},
 			{Name: "recursive", Type: "bool", Required: false, Desc: "Walk all subdirs (default true; pass false for top-level only)"},
 		},
-		Notes: "Recursive by default. Returns go_files (with symbols), non_go_files (with size), and subdirs when recursive=false.",
+		Notes: "Returns non_go_files (name, size, readonly) and subdirs (when recursive=false). Go files are never returned — use ast_list or ast_find_symbols for those.",
 	},
 	{
 		Name: "gomod_read",

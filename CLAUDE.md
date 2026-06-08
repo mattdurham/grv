@@ -9,3 +9,5 @@
 4. All file writes are atomic: write to a temp file in the same directory, then `os.Rename`. If `go/format` fails, the original file is untouched.
 
 5. Readonly detection is enforced at the ops layer before any write. A file is readonly if it is under `vendor/`, `GOROOT`, the module cache, or has filesystem read-only permission.
+
+6. No command ever returns a `.go` file path or raw Go source text. Go files are accessed exclusively through the AST tools (`ast_list`, `ast_query`, etc.). `ast_directory` returns only non-Go files.
